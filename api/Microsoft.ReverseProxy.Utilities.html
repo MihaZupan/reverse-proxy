@@ -75,14 +75,15 @@
   <div class="markdown level0 summary"></div>
   <div class="markdown level0 conceptual"></div>
   <div class="markdown level0 remarks"></div>
-    <h3 id="classes">Classes
+    <h3 id="interfaces">Interfaces
   </h3>
-      <h4><a class="xref" href="Microsoft.ReverseProxy.Utilities.MonotonicTimer.html">MonotonicTimer</a></h4>
-      <section><p>Provides a way to measure time in a monotonic fashion, immune to any system clock changes.
-The time is measured from the moment the class is instantiated.</p>
+      <h4><a class="xref" href="Microsoft.ReverseProxy.Utilities.IClock.html">IClock</a></h4>
+      <section><p>Abstraction over monotonic time providers
+(Environment.TickCount64, Stopwatch.GetTimestamp, as opposed to DateTime).</p>
 </section>
-      <h4><a class="xref" href="Microsoft.ReverseProxy.Utilities.MonotonicTimerExtensions.html">MonotonicTimerExtensions</a></h4>
-      <section><p>Extension methods for <a class="xref" href="Microsoft.ReverseProxy.Utilities.MonotonicTimer.html">MonotonicTimer</a>.</p>
+      <h4><a class="xref" href="Microsoft.ReverseProxy.Utilities.IRandomFactory.html">IRandomFactory</a></h4>
+      <section><p>Factory for creating random class. This factory let us able to inject random class into other class.
+So that we can mock the random class for unit test.</p>
 </section>
 </article>
           </div>
