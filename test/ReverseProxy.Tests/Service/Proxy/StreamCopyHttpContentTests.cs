@@ -8,7 +8,6 @@ using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 using Microsoft.ReverseProxy.Common.Tests;
 using Microsoft.ReverseProxy.Utilities;
 using Moq;
@@ -39,22 +38,11 @@ namespace Microsoft.ReverseProxy.Service.Proxy.Tests
         }
 
         [Theory]
-        [InlineData(false)] // we expect to always flush at least once to trigger sending request headers
-        [InlineData(true)]
-        public async Task CopyToAsync_AutoFlushing(bool autoFlush)
+        [InlineData(false, 1)] // we expect to always flush at least once to trigger sending request headers
+        [InlineData(true, 2)]
+        public async Task CopyToAsync_AutoFlushing(bool autoFlush, int expectedFlushes)
         {
-            // Must be same as StreamCopier constant.
-            const int DefaultBufferSize = 65536;
             const int SourceSize = (128 * 1024) - 3;
-
-            var expectedFlushes = 0;
-            if (autoFlush)
-            {
-                // How many buffers is needed to send the source rounded up.
-                expectedFlushes = (SourceSize - 1) / DefaultBufferSize + 1;
-            }
-            // Explicit flush after headers are sent.
-            expectedFlushes++;
 
             var sourceBytes = Enumerable.Range(0, SourceSize).Select(i => (byte)(i % 256)).ToArray();
             var source = new MemoryStream(sourceBytes);
