@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -103,6 +104,19 @@ namespace Microsoft.ReverseProxy.Service.Proxy
             {
                 throw new ArgumentException($"The http client must be of type HttpMessageInvoker, not HttpClient", nameof(httpClient));
             }
+
+            //if (Environment.Version.Major == 5)
+            //{
+            //    await Task.Delay(10);
+            //}
+            //else if (Environment.Version.Major == 6)
+            //{
+            //    await Task.Delay(100);
+            //}
+            //else
+            //{
+            //    throw new Exception("Not on 5 or 6");
+            //}
 
             ProxyTelemetry.Log.ProxyStart(destinationPrefix);
             try
