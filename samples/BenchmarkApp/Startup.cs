@@ -19,6 +19,7 @@ namespace BenchmarkApp
     {
         public const bool RegisterTelemetryAsScoped = true;
         public const bool ProxyTelemetryOnly = false;
+        public const bool MetricsOnly = true;
 
         private readonly IConfiguration _configuration;
 
@@ -95,11 +96,11 @@ namespace BenchmarkApp
 
             if (ProxyTelemetryOnly)
             {
-                //services.AddProxyTelemetryListener();
+                services.AddProxyTelemetryListener();
             }
             else
             {
-                //services.AddTelemetryListeners();
+                services.AddTelemetryListeners();
             }
 
             services.AddReverseProxy().LoadFromConfig(proxyConfig);
