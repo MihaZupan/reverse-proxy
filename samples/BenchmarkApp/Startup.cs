@@ -18,7 +18,7 @@ namespace BenchmarkApp
     public class Startup
     {
         public const bool RegisterTelemetryAsScoped = true;
-        public const bool ProxyTelemetryOnly = true;
+        public const bool ProxyTelemetryOnly = false;
 
         private readonly IConfiguration _configuration;
 
