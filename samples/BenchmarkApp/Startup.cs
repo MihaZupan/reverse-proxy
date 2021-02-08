@@ -18,8 +18,8 @@ namespace BenchmarkApp
     public class Startup
     {
         public const bool RegisterTelemetryAsScoped = true;
-        public const bool ProxyTelemetryOnly = false;
-        public const bool MetricsOnly = true;
+        public const bool MetricsOnly = false;
+        public const bool NoTelemetry = false;
 
         private readonly IConfiguration _configuration;
 
@@ -67,40 +67,36 @@ namespace BenchmarkApp
             {
                 services.AddScoped<TelemetryConsumer>();
                 services.AddScoped<IProxyTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                if (!ProxyTelemetryOnly)
-                {
-                    services.AddScoped<IKestrelTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                services.AddScoped<IKestrelTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
 #if !NETCOREAPP3_1
-                    services.AddScoped<IHttpTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<ISocketsTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<INetSecurityTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<INameResolutionTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                services.AddScoped<IHttpTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                services.AddScoped<ISocketsTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                services.AddScoped<INetSecurityTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                services.AddScoped<INameResolutionTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
 #endif
-                }
             }
             else
             {
                 var telemetry = new TelemetryConsumer();
                 services.AddSingleton<IProxyTelemetryConsumer>(telemetry);
-                if (!ProxyTelemetryOnly)
-                {
-                    services.AddSingleton<IKestrelTelemetryConsumer>(telemetry);
+                services.AddSingleton<IKestrelTelemetryConsumer>(telemetry);
 #if !NETCOREAPP3_1
-                    services.AddSingleton<IHttpTelemetryConsumer>(telemetry);
-                    services.AddSingleton<ISocketsTelemetryConsumer>(telemetry);
-                    services.AddSingleton<INetSecurityTelemetryConsumer>(telemetry);
-                    services.AddSingleton<INameResolutionTelemetryConsumer>(telemetry);
+                services.AddSingleton<IHttpTelemetryConsumer>(telemetry);
+                services.AddSingleton<ISocketsTelemetryConsumer>(telemetry);
+                services.AddSingleton<INetSecurityTelemetryConsumer>(telemetry);
+                services.AddSingleton<INameResolutionTelemetryConsumer>(telemetry);
 #endif
-                }
             }
 
-            if (ProxyTelemetryOnly)
+            if (MetricsOnly)
             {
-                services.AddProxyTelemetryListener();
+                MetricsOptions.Level = System.Diagnostics.Tracing.EventLevel.Critical;
             }
-            else
+
+            if (!NoTelemetry)
             {
-                services.AddTelemetryListeners();
+                services.AddKestrelTelemetryListener();
+                // services.AddTelemetryListeners();
             }
 
             services.AddReverseProxy().LoadFromConfig(proxyConfig);
