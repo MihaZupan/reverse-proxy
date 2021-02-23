@@ -478,7 +478,11 @@ namespace Microsoft.ReverseProxy.Service.Proxy
             using var clientStream = upgradeResult;
 
             // :: Step 7-A-2: Copy duplex streams
+#if NET
+            using var destinationStream = await destinationResponse.Content.ReadAsStreamAsync(longCancellation);
+#else
             using var destinationStream = await destinationResponse.Content.ReadAsStreamAsync();
+#endif
 
             using var abortTokenSource = CancellationTokenSource.CreateLinkedTokenSource(longCancellation);
 
@@ -530,7 +534,12 @@ namespace Microsoft.ReverseProxy.Service.Proxy
             // https://github.com/dotnet/runtime/blame/8fc68f626a11d646109a758cb0fc70a0aa7826f1/src/libraries/System.Net.Http/src/System/Net/Http/HttpResponseMessage.cs#L46
             if (destinationResponseContent != null)
             {
+#if NET
+                using var destinationResponseStream = await destinationResponseContent.ReadAsStreamAsync(cancellation);
+#else
                 using var destinationResponseStream = await destinationResponseContent.ReadAsStreamAsync();
+#endif
+
                 return await StreamCopier.CopyAsync(isRequest: false, destinationResponseStream, clientResponseStream, _clock, cancellation);
             }
 
