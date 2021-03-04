@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Diagnostics;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -105,17 +107,48 @@ namespace Microsoft.ReverseProxy.Service.Proxy
         {
             var isHttp2OrGreater = ProtocolHelper.IsHttp2OrGreater(httpContext.Request.Protocol);
 
-            foreach (var header in source)
+            var headers = UnsafeGetRawHeaders(source);
+            if (headers is null)
             {
-                var headerName = header.Key;
+                return;
+            }
+
+            foreach (var header in headers)
+            {
+                var headerName = header.Key.Name;
                 if (RequestUtilities.ShouldSkipResponseHeader(headerName, isHttp2OrGreater))
                 {
                     continue;
                 }
 
-                Debug.Assert(header.Value is string[]);
-                destination.Append(headerName, header.Value as string[] ?? header.Value.ToArray());
+                destination.Append(headerName, header.Value as string);
             }
+        }
+
+        internal static Dictionary<HeaderDescriptor, object> UnsafeGetRawHeaders(HttpHeaders headers)
+        {
+            return Unsafe.As<RawHttpHeaders>(headers).Data;
+        }
+
+        private sealed class RawHttpHeaders
+        {
+            public readonly Dictionary<HeaderDescriptor, object> Data;
+        }
+
+        internal readonly struct HeaderDescriptor : IEquatable<HeaderDescriptor>
+        {
+#pragma warning disable IDE0032 // Use auto property
+            private readonly string _headerName;
+            private readonly object _knownHeader;
+#pragma warning restore IDE0032 // Use auto property
+
+            public string Name => _headerName;
+
+            public bool Equals(HeaderDescriptor other) =>
+                _knownHeader == null ?
+                    string.Equals(_headerName, other._headerName, StringComparison.OrdinalIgnoreCase) :
+                    _knownHeader == other._knownHeader;
+            public override int GetHashCode() => _knownHeader?.GetHashCode() ?? StringComparer.OrdinalIgnoreCase.GetHashCode(_headerName);
         }
     }
 }

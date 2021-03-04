@@ -1,9 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Linq;
+using System;
+using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Primitives;
+using Microsoft.ReverseProxy.Service.Proxy;
 using Microsoft.ReverseProxy.Utilities;
 
 namespace Microsoft.ReverseProxy.Service.RuntimeModel.Transforms
@@ -45,6 +48,37 @@ namespace Microsoft.ReverseProxy.Service.RuntimeModel.Transforms
             }
 
             return existingValues;
+        }
+
+        internal static void RemoveHeader(RequestTransformContext context, string headerName)
+        {
+            if (!TryRemove(context.ProxyRequest.Headers, headerName))
+            {
+                var content = context.ProxyRequest.Content;
+                if (content is not null)
+                {
+                    TryRemove(content.Headers, headerName);
+                }
+            }
+
+            static bool TryRemove(HttpHeaders headers, string headerName)
+            {
+                var rawHeaders = HttpTransformer.UnsafeGetRawHeaders(headers);
+                if (rawHeaders is not null)
+                {
+                    foreach (var entry in rawHeaders)
+                    {
+                        if (StringComparer.OrdinalIgnoreCase.Equals(entry.Key.Name, headerName))
+                        {
+                            var removed = rawHeaders.Remove(entry.Key);
+                            Debug.Assert(removed);
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
         }
 
         /// <summary>
