@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -33,6 +35,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
 #endif
         private readonly ILogger _logger;
         private readonly IClock _clock;
+
+        private static readonly TimeoutCtsPool _ctsPool = new(DefaultTimeout, TimeSpan.FromSeconds(1));
 
         public HttpProxy(ILogger<HttpProxy> logger, IClock clock)
         {
@@ -122,8 +126,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
 
                 // :: Step 4: Send the outgoing request using HttpClient
                 HttpResponseMessage destinationResponse;
-                var requestTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
-                requestTimeoutSource.CancelAfter(requestOptions?.Timeout ?? DefaultTimeout);
+
+                var requestTimeoutSource = _ctsPool.Rent(requestOptions?.Timeout ?? DefaultTimeout, requestAborted);
                 var requestTimeoutToken = requestTimeoutSource.Token;
                 try
                 {
@@ -151,7 +155,7 @@ namespace Yarp.ReverseProxy.Service.Proxy
                 }
                 finally
                 {
-                    requestTimeoutSource.Dispose();
+                    requestTimeoutSource.Return();
                 }
 
                 // Detect connection downgrade, which may be problematic for e.g. gRPC.
@@ -711,6 +715,199 @@ namespace Yarp.ReverseProxy.Service.Proxy
                     ProxyError.NoAvailableDestinations => throw new NotImplementedException(), // Not used in this class
                     _ => throw new NotImplementedException(error.ToString()),
                 };
+            }
+        }
+    }
+
+    internal sealed class TimeoutCtsPool : IDisposable
+    {
+        // Reduces the chance of CTS CancelAfter Timers firing
+        private const int PoolsDisposedInAdvance = 2;
+
+        // How accurate we want very short timeouts to be.
+        // Timeouts shorter than this will fall back to non-pooled CTSs
+        private const int MinTimeoutMultiplier = 5;
+
+        // Overall accuracy of timeouts
+        private const int MinResolutionRatio = 10;
+
+        private readonly TimeSpan _maxTimeout;
+        private readonly TimeSpan _minTimeout;
+        private readonly TimeSpan _resolution;
+        private readonly Timer _timer;
+        private readonly CtsPool[] _pools;
+        private int _index;
+
+        public sealed class CtsPool
+        {
+            private ConcurrentQueue<PooledCts> _sources = new();
+            private readonly TimeSpan _timeout;
+
+            public CtsPool(TimeSpan timeout)
+            {
+                _timeout = timeout;
+            }
+
+            public PooledCts Rent()
+            {
+                var sources = _sources;
+                if (sources is null || !sources.TryDequeue(out var cts))
+                {
+                    cts = new PooledCts(this);
+                    cts.CancelAfter(_timeout);
+                }
+
+                return cts;
+            }
+
+            public void Return(PooledCts cts)
+            {
+                var sources = _sources;
+                if (sources is null)
+                {
+                    cts.Dispose();
+                }
+                else
+                {
+                    sources.Enqueue(cts);
+                }
+            }
+
+            public void Dispose()
+            {
+                var sources = _sources;
+                _sources = null;
+
+                while (sources.TryDequeue(out var cts))
+                {
+                    cts.Dispose();
+                }
+            }
+        }
+
+        public sealed class PooledCts : CancellationTokenSource
+        {
+            private static readonly Action<object> _linkedTokenCancelDelegate = static s =>
+            {
+                ((CancellationTokenSource)s).Cancel(throwOnFirstException: false);
+            };
+
+            private readonly CtsPool _pool;
+            private CancellationTokenRegistration _registration;
+
+            public PooledCts(CtsPool pool) => _pool = pool;
+
+            public void Register(CancellationToken linkedToken)
+            {
+                Debug.Assert(_registration == default);
+                _registration = linkedToken.UnsafeRegister(_linkedTokenCancelDelegate, this);
+            }
+
+            public void Return()
+            {
+                _registration.Dispose();
+                _registration = default;
+
+                if (!IsCancellationRequested)
+                {
+                    var pool = _pool;
+                    if (pool is null)
+                    {
+                        Dispose();
+                    }
+                    else
+                    {
+                        pool.Return(this);
+                    }
+                }
+            }
+        }
+
+        public TimeoutCtsPool(TimeSpan maxTimeout, TimeSpan resolution)
+        {
+            if (maxTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxTimeout), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution * MinResolutionRatio > maxTimeout)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), $"The resolution has to be at most 1/{MinResolutionRatio}th of maxTimeout.");
+            }
+
+            _maxTimeout = maxTimeout;
+            _minTimeout = resolution * MinTimeoutMultiplier;
+            _resolution = resolution;
+
+            _pools = new CtsPool[(int)Math.Ceiling((double)maxTimeout.Ticks / resolution.Ticks)];
+            for (var i = 0; i < _pools.Length; i++)
+            {
+                _pools[i] = new CtsPool(_maxTimeout);
+            }
+
+            Debug.Assert(_pools.Length > PoolsDisposedInAdvance);
+            for (var i = 0; i < PoolsDisposedInAdvance; i++)
+            {
+                _pools[i + 1].Dispose();
+            }
+
+            using (ExecutionContext.SuppressFlow())
+            {
+                _timer = new Timer(static s => ((TimeoutCtsPool)s!).TimerCallback(), this, resolution, resolution);
+            }
+        }
+
+        private void TimerCallback()
+        {
+            var nextIndex = (_index + 1) % _pools.Length;
+            _pools[nextIndex] = new CtsPool(_maxTimeout);
+            _index = nextIndex;
+
+            // Dispose pools ahead of their expiration to avoid firing CTS CancelAfter Timers
+            _pools[(_index + PoolsDisposedInAdvance) % _pools.Length].Dispose();
+        }
+
+        private PooledCts RentInternal(TimeSpan timeout)
+        {
+            var index = _index;
+
+            if (timeout != _maxTimeout)
+            {
+                if (timeout <= _maxTimeout && timeout >= _minTimeout)
+                {
+                    // If timeout is shorter than the maximum duration tracked by the pool, we can use an older CTS
+                    index = (index + (int)(timeout / _resolution)) % _pools.Length;
+                }
+                else
+                {
+                    // Fallback to a regular CTS with CancelAfter
+                    var cts = new PooledCts(null);
+                    cts.CancelAfter(timeout);
+                    return cts;
+                }
+            }
+
+            return _pools[index].Rent();
+        }
+
+        public PooledCts Rent(TimeSpan timeout, CancellationToken linkedToken)
+        {
+            var cts = RentInternal(timeout);
+            cts.Register(linkedToken);
+            return cts;
+        }
+
+        public void Dispose()
+        {
+            _timer.Dispose();
+            foreach (var pool in _pools)
+            {
+                pool.Dispose();
             }
         }
     }
