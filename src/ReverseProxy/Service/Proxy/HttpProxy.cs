@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -33,6 +34,13 @@ namespace Yarp.ReverseProxy.Service.Proxy
 #endif
         private readonly ILogger _logger;
         private readonly IClock _clock;
+
+        private static readonly Action<object> s_linkedTokenCancelDelegate = static s =>
+        {
+            ((CancellationTokenSource)s).Cancel(throwOnFirstException: false);
+        };
+
+        private static readonly TimeoutCtsPool _ctsPool = new(DefaultTimeout, TimeSpan.FromSeconds(1));
 
         public HttpProxy(ILogger<HttpProxy> logger, IClock clock)
         {
@@ -122,8 +130,10 @@ namespace Yarp.ReverseProxy.Service.Proxy
 
                 // :: Step 4: Send the outgoing request using HttpClient
                 HttpResponseMessage destinationResponse;
-                var requestTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
-                requestTimeoutSource.CancelAfter(requestOptions?.Timeout ?? DefaultTimeout);
+
+                // We should honor the per-request timeout, this is just POC
+                var requestTimeoutSource = _ctsPool.Rent();
+                var requestAbortedRegistration = requestAborted.UnsafeRegister(s_linkedTokenCancelDelegate, requestTimeoutSource);
                 var requestTimeoutToken = requestTimeoutSource.Token;
                 try
                 {
@@ -151,7 +161,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
                 }
                 finally
                 {
-                    requestTimeoutSource.Dispose();
+                    requestAbortedRegistration.Dispose();
+                    requestTimeoutSource.Return();
                 }
 
                 // Detect connection downgrade, which may be problematic for e.g. gRPC.
@@ -712,6 +723,114 @@ namespace Yarp.ReverseProxy.Service.Proxy
                     _ => throw new NotImplementedException(error.ToString()),
                 };
             }
+        }
+    }
+
+    internal sealed class TimeoutCtsPool : IDisposable
+    {
+        private readonly TimeSpan _timeout;
+        private readonly Timer _timer;
+        private CtsPool _pool;
+
+        public sealed class CtsPool
+        {
+            private ConcurrentBag<PooledCts> _sources = new();
+            private readonly TimeSpan _timeout;
+
+            public CtsPool(TimeSpan timeout)
+            {
+                _timeout = timeout;
+            }
+
+            public PooledCts Rent()
+            {
+                if (!_sources.TryTake(out var cts))
+                {
+                    cts = new PooledCts(this);
+                    cts.CancelAfter(_timeout);
+                }
+
+                return cts;
+            }
+
+            public void Return(PooledCts cts)
+            {
+                if (!cts.IsCancellationRequested)
+                {
+                    var sources = _sources;
+                    if (sources is null)
+                    {
+                        cts.Dispose();
+                    }
+                    else
+                    {
+                        sources.Add(cts);
+                    }
+                }
+            }
+
+            public void Dispose()
+            {
+                var sources = _sources;
+                _sources = null;
+
+                while (sources.TryTake(out var cts))
+                {
+                    cts.Dispose();
+                }
+            }
+        }
+
+        public sealed class PooledCts : CancellationTokenSource
+        {
+            private readonly CtsPool _pool;
+
+            public PooledCts(CtsPool pool) => _pool = pool;
+
+            public void Return() => _pool.Return(this);
+        }
+
+        public TimeoutCtsPool(TimeSpan timeout, TimeSpan resolution)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(timeout), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution > timeout)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), "The resolution has to be lower than the maximum timeout.");
+            }
+
+            _timeout = timeout;
+
+            _pool = new CtsPool(_timeout);
+
+            using (ExecutionContext.SuppressFlow())
+            {
+                _timer = new Timer(static s => ((TimeoutCtsPool)s!).TimerCallback(), this, resolution, resolution);
+            }
+        }
+
+        private void TimerCallback()
+        {
+            var newPool = new CtsPool(_timeout);
+            var oldPool = _pool;
+            _pool = newPool;
+            oldPool.Dispose();
+        }
+
+        public PooledCts Rent() => _pool.Rent();
+
+        public void Dispose()
+        {
+            _timer.Dispose();
+            _pool.Dispose();
         }
     }
 }
