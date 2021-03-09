@@ -34,6 +34,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
         private readonly ILogger _logger;
         private readonly IClock _clock;
 
+        private static readonly TimeoutCtsFactory _ctsFactory = new(DefaultTimeout, TimeSpan.FromSeconds(1));
+
         public HttpProxy(ILogger<HttpProxy> logger, IClock clock)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -122,8 +124,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
 
                 // :: Step 4: Send the outgoing request using HttpClient
                 HttpResponseMessage destinationResponse;
-                var requestTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
-                requestTimeoutSource.CancelAfter(requestOptions?.Timeout ?? DefaultTimeout);
+
+                var requestTimeoutSource = _ctsFactory.CreateCTS(requestOptions?.Timeout ?? DefaultTimeout, requestAborted);
                 var requestTimeoutToken = requestTimeoutSource.Token;
                 try
                 {
@@ -713,5 +715,95 @@ namespace Yarp.ReverseProxy.Service.Proxy
                 };
             }
         }
+    }
+
+    internal sealed class TimeoutCtsFactory : IDisposable
+    {
+        private readonly TimeSpan _maxTimeout;
+        private readonly TimeSpan _resolution;
+        private readonly Timer _timer;
+        private readonly CancellationTokenSource[][] _sources;
+        private int _index;
+
+        public TimeoutCtsFactory(TimeSpan maxTimeout, TimeSpan resolution)
+        {
+            if (maxTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxTimeout), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), "Max timeout has to be a positive value.");
+            }
+
+            if (resolution > maxTimeout)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolution), "The resolution has to be lower than the maximum timeout.");
+            }
+
+            _maxTimeout = maxTimeout;
+            _resolution = resolution;
+
+            _sources = new CancellationTokenSource[(int)Math.Ceiling((double)maxTimeout.Ticks / resolution.Ticks)][];
+
+            // Try to minimize contention on CTS registrations by splitting load between `ProcessorCount` CTS
+            var sourceCount = Environment.ProcessorCount;
+            for (var i = 0; i < _sources.Length; i++)
+            {
+                var sources = _sources[i] = new CancellationTokenSource[sourceCount];
+                for (var j = 0; j < sources.Length; j++)
+                {
+                    sources[j] = new CancellationTokenSource();
+                }
+            }
+
+            _index = 0;
+
+            using (ExecutionContext.SuppressFlow())
+            {
+                _timer = new Timer(static s => ((TimeoutCtsFactory)s!).TimerCallback(), this, resolution, resolution);
+            }
+        }
+
+        private void TimerCallback()
+        {
+            var nextIndex = (_index + 1) % _sources.Length;
+            var expiredCtss = _sources[nextIndex];
+            for (var i = 0; i < expiredCtss.Length; i++)
+            {
+                expiredCtss[i].Cancel();
+                expiredCtss[i] = new CancellationTokenSource();
+            }
+            _index = nextIndex;
+        }
+
+        public CancellationTokenSource CreateCTS(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            var index = _index;
+
+            if (timeout != _maxTimeout)
+            {
+                if (timeout <= _maxTimeout && timeout > _resolution)
+                {
+                    // If timeout is shorter than the maximum duration tracked by the factory, we can use an older CTS
+                    index = (index + (int)(timeout / _resolution)) % _sources.Length;
+                }
+                else
+                {
+                    // Fallback to a regular CTS with CancelAfter
+                    var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    cts.CancelAfter(timeout);
+                    return cts;
+                }
+            }
+
+            var sources = _sources[index];
+            var source = sources[Environment.CurrentManagedThreadId % sources.Length];
+
+            return CancellationTokenSource.CreateLinkedTokenSource(source.Token, cancellationToken);
+        }
+
+        public void Dispose() => _timer.Dispose();
     }
 }
