@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Yarp.ReverseProxy.Telemetry.Consumption;
 
@@ -31,6 +32,17 @@ namespace Microsoft.Extensions.DependencyInjection
             services.AddHostedService(provider => SocketsEventListenerService.Create<SocketsEventListenerService>(provider));
 #endif
             return services;
+        }
+
+        public static IServiceCollection AddScopedTelemetryConsumer<TConsumer>(this IServiceCollection services)
+        {
+            services.TryAddSingleton<ITelemetryConsumerFactory<TConsumer>, TelemetryConsumerFactory<TConsumer>>();
+            return services;
+        }
+
+        private sealed record TelemetryConsumerFactory<TConsumer>(IServiceProvider ServiceProvider) : ITelemetryConsumerFactory<TConsumer>
+        {
+            public TConsumer Create() => ServiceProvider.GetService<TConsumer>();
         }
     }
 }
