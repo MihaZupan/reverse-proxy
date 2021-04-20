@@ -8,7 +8,6 @@ using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -43,24 +42,35 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
         protected abstract string EventSourceName { get; }
 
         protected readonly ILogger<TService> Logger;
-        protected readonly IServiceProvider ServiceProvider;
-        protected readonly IHttpContextAccessor HttpContextAccessor;
+        protected readonly TMetricsConsumer[] MetricsConsumers;
+        protected readonly TTelemetryConsumer[] TelemetryConsumers;
 
         private EventSource _eventSource;
         private readonly object _syncObject = new();
         private readonly ManualResetEventSlim _initializedMre = _threadStaticInitializedMre;
-        private readonly bool _enableEvents;
-        private readonly bool _enableMetrics;
 
-        public EventListenerService(ILogger<TService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
+        public EventListenerService(
+            ILogger<TService> logger,
+            IEnumerable<TTelemetryConsumer> telemetryConsumers,
+            IEnumerable<TMetricsConsumer> metricsConsumers)
         {
             Logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            ServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-            HttpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
-            _ = services ?? throw new ArgumentNullException(nameof(services));
+            _ = telemetryConsumers ?? throw new ArgumentNullException(nameof(telemetryConsumers));
+            _ = metricsConsumers ?? throw new ArgumentNullException(nameof(metricsConsumers));
 
-            _enableEvents = services.Services.Any(s => s.ServiceType == typeof(TTelemetryConsumer));
-            _enableMetrics = services.Services.Any(s => s.ServiceType == typeof(TMetricsConsumer));
+            TelemetryConsumers = telemetryConsumers.ToArray();
+            MetricsConsumers = metricsConsumers.ToArray();
+
+            if (TelemetryConsumers.Any(s => s is null) || metricsConsumers.Any(c => c is null))
+            {
+                throw new ArgumentException("A consumer may not be null",
+                    TelemetryConsumers.Any(s => s is null) ? nameof(telemetryConsumers) : nameof(metricsConsumers));
+            }
+
+            if (TelemetryConsumers.Length == 0)
+            {
+                TelemetryConsumers = null;
+            }
 
             lock (_syncObject)
             {
@@ -101,13 +111,16 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         private void EnableEventSource()
         {
-            if (!_enableEvents && !_enableMetrics)
+            var enableEvents = TelemetryConsumers is not null;
+            var enableMetrics = MetricsConsumers.Length != 0;
+
+            if (!enableEvents && !enableMetrics)
             {
                 return;
             }
 
-            var eventLevel = _enableEvents ? EventLevel.LogAlways : EventLevel.Critical;
-            var arguments = _enableMetrics ? new Dictionary<string, string> { { "EventCounterIntervalSec", MetricsOptions.Interval.TotalSeconds.ToString() } } : null;
+            var eventLevel = enableEvents ? EventLevel.LogAlways : EventLevel.Critical;
+            var arguments = enableMetrics ? new Dictionary<string, string> { { "EventCounterIntervalSec", MetricsOptions.Interval.TotalSeconds.ToString() } } : null;
 
             EnableEvents(_eventSource, eventLevel, EventKeywords.None, arguments);
             _eventSource = null;

@@ -5,22 +5,15 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Yarp.ReverseProxy.Telemetry.Consumption
 {
 #if !NET5_0
-    internal sealed class DummyClassNotInTheServiceCollection { }
+    internal interface IKestrelMetricsConsumer { }
 #endif
 
-    internal sealed class KestrelEventListenerService
-#if NET5_0
-        : EventListenerService<KestrelEventListenerService, IKestrelTelemetryConsumer, IKestrelMetricsConsumer>
-#else
-        : EventListenerService<KestrelEventListenerService, IKestrelTelemetryConsumer, DummyClassNotInTheServiceCollection>
-#endif
+    internal sealed class KestrelEventListenerService : EventListenerService<KestrelEventListenerService, IKestrelTelemetryConsumer, IKestrelMetricsConsumer>
     {
 #if NET5_0
         private KestrelMetrics _previousMetrics;
@@ -30,8 +23,8 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         protected override string EventSourceName => "Microsoft-AspNetCore-Server-Kestrel";
 
-        public KestrelEventListenerService(ILogger<KestrelEventListenerService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
-            : base(logger, serviceProvider, httpContextAccessor, services)
+        public KestrelEventListenerService(ILogger<KestrelEventListenerService> logger, IEnumerable<IKestrelTelemetryConsumer> telemetryConsumers, IEnumerable<IKestrelMetricsConsumer> metricsConsumers)
+            : base(logger, telemetryConsumers, metricsConsumers)
         { }
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -51,15 +44,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                 return;
             }
 
-            var context = HttpContextAccessor.HttpContext;
-            if (context is null)
-            {
-                return;
-            }
-
-            using var consumers = context.RequestServices.GetServices<IKestrelTelemetryConsumer>().GetEnumerator();
-
-            if (!consumers.MoveNext())
+            if (TelemetryConsumers is null)
             {
                 return;
             }
@@ -77,11 +62,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var httpVersion = (string)payload[2];
                         var path = (string)payload[3];
                         var method = (string)payload[4];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnRequestStart(eventData.TimeStamp, connectionId, requestId, httpVersion, path, method);
+                            consumer.OnRequestStart(eventData.TimeStamp, connectionId, requestId, httpVersion, path, method);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -93,11 +77,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var httpVersion = (string)payload[2];
                         var path = (string)payload[3];
                         var method = (string)payload[4];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnRequestStop(eventData.TimeStamp, connectionId, requestId, httpVersion, path, method);
+                            consumer.OnRequestStop(eventData.TimeStamp, connectionId, requestId, httpVersion, path, method);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -109,11 +92,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     {
                         var connectionId = (string)payload[0];
                         var requestId = (string)payload[1];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnRequestStart(eventData.TimeStamp, connectionId, requestId);
+                            consumer.OnRequestStart(eventData.TimeStamp, connectionId, requestId);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -122,11 +104,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     {
                         var connectionId = (string)payload[0];
                         var requestId = (string)payload[1];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnRequestStop(eventData.TimeStamp, connectionId, requestId);
+                            consumer.OnRequestStop(eventData.TimeStamp, connectionId, requestId);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -212,7 +193,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
                 try
                 {
-                    foreach (var consumer in ServiceProvider.GetServices<IKestrelMetricsConsumer>())
+                    foreach (var consumer in MetricsConsumers)
                     {
                         consumer.OnKestrelMetrics(previous, metrics);
                     }

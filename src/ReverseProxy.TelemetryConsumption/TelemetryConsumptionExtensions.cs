@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Yarp.ReverseProxy.Telemetry.Consumption;
 
 namespace Microsoft.Extensions.DependencyInjection
@@ -20,7 +19,6 @@ namespace Microsoft.Extensions.DependencyInjection
         public static IServiceCollection AddTelemetryListeners(this IServiceCollection services)
         {
             services.AddHttpContextAccessor();
-            services.TryAddSingleton(new ServiceCollectionInternal(services));
 
             services.AddHostedService(provider => ProxyEventListenerService.Create<ProxyEventListenerService>(provider));
             services.AddHostedService(provider => KestrelEventListenerService.Create<KestrelEventListenerService>(provider));

@@ -6,8 +6,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Security.Authentication;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Yarp.ReverseProxy.Telemetry.Consumption
@@ -20,8 +18,8 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         protected override string EventSourceName => "System.Net.Security";
 
-        public NetSecurityEventListenerService(ILogger<NetSecurityEventListenerService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
-            : base(logger, serviceProvider, httpContextAccessor, services)
+        public NetSecurityEventListenerService(ILogger<NetSecurityEventListenerService> logger, IEnumerable<INetSecurityTelemetryConsumer> telemetryConsumers, IEnumerable<INetSecurityMetricsConsumer> metricsConsumers)
+            : base(logger, telemetryConsumers, metricsConsumers)
         { }
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -39,15 +37,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                 return;
             }
 
-            var context = HttpContextAccessor.HttpContext;
-            if (context is null)
-            {
-                return;
-            }
-
-            using var consumers = context.RequestServices.GetServices<INetSecurityTelemetryConsumer>().GetEnumerator();
-
-            if (!consumers.MoveNext())
+            if (TelemetryConsumers is null)
             {
                 return;
             }
@@ -61,11 +51,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     {
                         var isServer = (bool)payload[0];
                         var targetHost = (string)payload[1];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnHandshakeStart(eventData.TimeStamp, isServer, targetHost);
+                            consumer.OnHandshakeStart(eventData.TimeStamp, isServer, targetHost);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -73,11 +62,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "HandshakeStop" && payload.Count == 1);
                     {
                         var protocol = (SslProtocols)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnHandshakeStop(eventData.TimeStamp, protocol);
+                            consumer.OnHandshakeStop(eventData.TimeStamp, protocol);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -87,11 +75,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var isServer = (bool)payload[0];
                         var elapsed = TimeSpan.FromMilliseconds((double)payload[1]);
                         var exceptionMessage = (string)payload[2];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnHandshakeFailed(eventData.TimeStamp, isServer, elapsed, exceptionMessage);
+                            consumer.OnHandshakeFailed(eventData.TimeStamp, isServer, elapsed, exceptionMessage);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -191,7 +178,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
                 try
                 {
-                    foreach (var consumer in ServiceProvider.GetServices<INetSecurityMetricsConsumer>())
+                    foreach (var consumer in MetricsConsumers)
                     {
                         consumer.OnNetSecurityMetrics(previous, metrics);
                     }

@@ -11,9 +11,11 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 using Yarp.ReverseProxy.Common;
 using Yarp.ReverseProxy.Service.Proxy;
@@ -26,7 +28,7 @@ namespace Yarp.ReverseProxy
         [Fact]
         public async Task TelemetryConsumptionWorks()
         {
-            var consumers = new ConcurrentBag<TelemetryConsumer>();
+            var consumer = new TelemetryConsumer();
 
             var test = new TestEnvironment(
                 async context =>
@@ -37,19 +39,13 @@ namespace Yarp.ReverseProxy
                 {
                     var services = proxyBuilder.Services;
 
-                    services.AddScoped(services =>
-                    {
-                        var consumer = new TelemetryConsumer();
-                        consumers.Add(consumer);
-                        return consumer;
-                    });
-                    services.AddScoped<IProxyTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<IKestrelTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                    services.TryAddSingleton<IProxyTelemetryConsumer>(consumer);
+                    services.TryAddSingleton<IKestrelTelemetryConsumer>(consumer);
 #if NET5_0
-                    services.AddScoped<IHttpTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<ISocketsTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<INetSecurityTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
-                    services.AddScoped<INameResolutionTelemetryConsumer>(services => services.GetRequiredService<TelemetryConsumer>());
+                    services.TryAddSingleton<IHttpTelemetryConsumer>(consumer);
+                    services.TryAddSingleton<ISocketsTelemetryConsumer>(consumer);
+                    services.TryAddSingleton<INetSecurityTelemetryConsumer>(consumer);
+                    services.TryAddSingleton<INameResolutionTelemetryConsumer>(consumer);
 #endif
 
                     services.AddTelemetryListeners();
@@ -65,7 +61,7 @@ namespace Yarp.ReverseProxy
                 await httpClient.GetStringAsync(uri);
             });
 
-            var stages = Assert.Single(consumers, c => c.ClusterId == test.ClusterId).Stages;
+            Assert.True(consumer.PerClusterTelemetry.TryGetValue(test.ClusterId, out var stages));
 
             var expected = new[]
             {
@@ -117,15 +113,17 @@ namespace Yarp.ReverseProxy
             ISocketsTelemetryConsumer
 #endif
         {
-            public string ClusterId { get; set; }
+            public readonly ConcurrentDictionary<string, List<(string Stage, DateTime Timestamp)>> PerClusterTelemetry = new();
 
-            public readonly List<(string Stage, DateTime Timestamp)> Stages = new();
+            private readonly AsyncLocal<List<(string Stage, DateTime Timestamp)>> Stages = new();
 
             private void AddStage(string stage, DateTime timestamp)
             {
-                lock (Stages)
+                var stages = Stages.Value ??= new List<(string Stage, DateTime Timestamp)>();
+
+                lock (stages)
                 {
-                    Stages.Add((stage, timestamp));
+                    stages.Add((stage, timestamp));
                 }
             }
 
@@ -137,8 +135,8 @@ namespace Yarp.ReverseProxy
             public void OnContentTransferred(DateTime timestamp, bool isRequest, long contentLength, long iops, TimeSpan readTime, TimeSpan writeTime, TimeSpan firstReadTime) => AddStage(nameof(OnContentTransferred), timestamp);
             public void OnProxyInvoke(DateTime timestamp, string clusterId, string routeId, string destinationId)
             {
-                ClusterId = clusterId;
                 AddStage(nameof(OnProxyInvoke), timestamp);
+                PerClusterTelemetry.TryAdd(clusterId, Stages.Value);
             }
 #if NET5_0
             public void OnRequestStart(DateTime timestamp, string scheme, string host, int port, string pathAndQuery, int versionMajor, int versionMinor, HttpVersionPolicy versionPolicy) => AddStage(nameof(OnRequestStart), timestamp);

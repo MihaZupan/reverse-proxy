@@ -5,8 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Yarp.ReverseProxy.Telemetry.Consumption
@@ -19,8 +17,8 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         protected override string EventSourceName => "System.Net.NameResolution";
 
-        public NameResolutionEventListenerService(ILogger<NameResolutionEventListenerService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
-            : base(logger, serviceProvider, httpContextAccessor, services)
+        public NameResolutionEventListenerService(ILogger<NameResolutionEventListenerService> logger, IEnumerable<INameResolutionTelemetryConsumer> telemetryConsumers, IEnumerable<INameResolutionMetricsConsumer> metricsConsumers)
+            : base(logger, telemetryConsumers, metricsConsumers)
         { }
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -38,15 +36,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                 return;
             }
 
-            var context = HttpContextAccessor.HttpContext;
-            if (context is null)
-            {
-                return;
-            }
-
-            using var consumers = context.RequestServices.GetServices<INameResolutionTelemetryConsumer>().GetEnumerator();
-
-            if (!consumers.MoveNext())
+            if (TelemetryConsumers is null)
             {
                 return;
             }
@@ -59,33 +49,30 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ResolutionStart" && payload.Count == 1);
                     {
                         var hostNameOrAddress = (string)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnResolutionStart(eventData.TimeStamp, hostNameOrAddress);
+                            consumer.OnResolutionStart(eventData.TimeStamp, hostNameOrAddress);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
                 case 2:
                     Debug.Assert(eventData.EventName == "ResolutionStop" && payload.Count == 0);
                     {
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnResolutionStop(eventData.TimeStamp);
+                            consumer.OnResolutionStop(eventData.TimeStamp);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
                 case 3:
                     Debug.Assert(eventData.EventName == "ResolutionFailed" && payload.Count == 0);
                     {
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnResolutionFailed(eventData.TimeStamp);
+                            consumer.OnResolutionFailed(eventData.TimeStamp);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -137,7 +124,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
                 try
                 {
-                    foreach (var consumer in ServiceProvider.GetServices<INameResolutionMetricsConsumer>())
+                    foreach (var consumer in MetricsConsumers)
                     {
                         consumer.OnNameResolutionMetrics(previous, metrics);
                     }

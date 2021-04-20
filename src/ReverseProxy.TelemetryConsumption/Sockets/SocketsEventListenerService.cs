@@ -6,8 +6,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Net.Sockets;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Yarp.ReverseProxy.Telemetry.Consumption
@@ -20,8 +18,8 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         protected override string EventSourceName => "System.Net.Sockets";
 
-        public SocketsEventListenerService(ILogger<SocketsEventListenerService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
-            : base(logger, serviceProvider, httpContextAccessor, services)
+        public SocketsEventListenerService(ILogger<SocketsEventListenerService> logger, IEnumerable<ISocketsTelemetryConsumer> telemetryConsumers, IEnumerable<ISocketsMetricsConsumer> metricsConsumers)
+            : base(logger, telemetryConsumers, metricsConsumers)
         { }
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -39,15 +37,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                 return;
             }
 
-            var context = HttpContextAccessor.HttpContext;
-            if (context is null)
-            {
-                return;
-            }
-
-            using var consumers = context.RequestServices.GetServices<ISocketsTelemetryConsumer>().GetEnumerator();
-
-            if (!consumers.MoveNext())
+            if (TelemetryConsumers is null)
             {
                 return;
             }
@@ -60,22 +50,20 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ConnectStart" && payload.Count == 1);
                     {
                         var address = (string)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnConnectStart(eventData.TimeStamp, address);
+                            consumer.OnConnectStart(eventData.TimeStamp, address);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
                 case 2:
                     Debug.Assert(eventData.EventName == "ConnectStop" && payload.Count == 0);
                     {
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnConnectStop(eventData.TimeStamp);
+                            consumer.OnConnectStop(eventData.TimeStamp);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -84,11 +72,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     {
                         var error = (SocketError)payload[0];
                         var exceptionMessage = (string)payload[1];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnConnectFailed(eventData.TimeStamp, error, exceptionMessage);
+                            consumer.OnConnectFailed(eventData.TimeStamp, error, exceptionMessage);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -156,7 +143,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
                 try
                 {
-                    foreach (var consumer in ServiceProvider.GetServices<ISocketsMetricsConsumer>())
+                    foreach (var consumer in MetricsConsumers)
                     {
                         consumer.OnSocketsMetrics(previous, metrics);
                     }

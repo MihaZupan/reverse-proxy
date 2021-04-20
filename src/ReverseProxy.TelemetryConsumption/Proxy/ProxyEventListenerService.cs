@@ -5,8 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Yarp.ReverseProxy.Service.Proxy;
 
@@ -20,8 +18,8 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
         protected override string EventSourceName => "Yarp.ReverseProxy";
 
-        public ProxyEventListenerService(ILogger<ProxyEventListenerService> logger, IServiceProvider serviceProvider, IHttpContextAccessor httpContextAccessor, ServiceCollectionInternal services)
-            : base(logger, serviceProvider, httpContextAccessor, services)
+        public ProxyEventListenerService(ILogger<ProxyEventListenerService> logger, IEnumerable<IProxyTelemetryConsumer> telemetryConsumers, IEnumerable<IProxyMetricsConsumer> metricsConsumers)
+            : base(logger, telemetryConsumers, metricsConsumers)
         { }
 
         protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -39,15 +37,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                 return;
             }
 
-            var context = HttpContextAccessor.HttpContext;
-            if (context is null)
-            {
-                return;
-            }
-
-            using var consumers = context.RequestServices.GetServices<IProxyTelemetryConsumer>().GetEnumerator();
-
-            if (!consumers.MoveNext())
+            if (TelemetryConsumers is null)
             {
                 return;
             }
@@ -60,11 +50,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ProxyStart" && payload.Count == 1);
                     {
                         var destinationPrefix = (string)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnProxyStart(eventData.TimeStamp, destinationPrefix);
+                            consumer.OnProxyStart(eventData.TimeStamp, destinationPrefix);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -72,11 +61,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ProxyStop" && payload.Count == 1);
                     {
                         var statusCode = (int)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnProxyStop(eventData.TimeStamp, statusCode);
+                            consumer.OnProxyStop(eventData.TimeStamp, statusCode);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -84,11 +72,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ProxyFailed" && payload.Count == 1);
                     {
                         var error = (ProxyError)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnProxyFailed(eventData.TimeStamp, error);
+                            consumer.OnProxyFailed(eventData.TimeStamp, error);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -96,11 +83,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                     Debug.Assert(eventData.EventName == "ProxyStage" && payload.Count == 1);
                     {
                         var proxyStage = (ProxyStage)payload[0];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnProxyStage(eventData.TimeStamp, proxyStage);
+                            consumer.OnProxyStage(eventData.TimeStamp, proxyStage);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -112,11 +98,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var iops = (long)payload[2];
                         var readTime = new TimeSpan((long)payload[3]);
                         var writeTime = new TimeSpan((long)payload[4]);
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnContentTransferring(eventData.TimeStamp, isRequest, contentLength, iops, readTime, writeTime);
+                            consumer.OnContentTransferring(eventData.TimeStamp, isRequest, contentLength, iops, readTime, writeTime);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -129,11 +114,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var readTime = new TimeSpan((long)payload[3]);
                         var writeTime = new TimeSpan((long)payload[4]);
                         var firstReadTime = new TimeSpan((long)payload[5]);
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnContentTransferred(eventData.TimeStamp, isRequest, contentLength, iops, readTime, writeTime, firstReadTime);
+                            consumer.OnContentTransferred(eventData.TimeStamp, isRequest, contentLength, iops, readTime, writeTime, firstReadTime);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
 
@@ -143,11 +127,10 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
                         var clusterId = (string)payload[0];
                         var routeId = (string)payload[1];
                         var destinationId = (string)payload[2];
-                        do
+                        foreach (var consumer in TelemetryConsumers)
                         {
-                            consumers.Current.OnProxyInvoke(eventData.TimeStamp, clusterId, routeId, destinationId);
+                            consumer.OnProxyInvoke(eventData.TimeStamp, clusterId, routeId, destinationId);
                         }
-                        while (consumers.MoveNext());
                     }
                     break;
             }
@@ -207,7 +190,7 @@ namespace Yarp.ReverseProxy.Telemetry.Consumption
 
                 try
                 {
-                    foreach (var consumer in ServiceProvider.GetServices<IProxyMetricsConsumer>())
+                    foreach (var consumer in MetricsConsumers)
                     {
                         consumer.OnProxyMetrics(previous, metrics);
                     }
