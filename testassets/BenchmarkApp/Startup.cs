@@ -64,15 +64,15 @@ namespace BenchmarkApp
         }
     }
 
-    public sealed class TelemetryConsumer :
-        IProxyTelemetryConsumer
+    public sealed class TelemetryConsumer
+        //IProxyTelemetryConsumer
         //IKestrelTelemetryConsumer
-//#if NET5_0
-//        , IHttpTelemetryConsumer
+#if NET5_0
+        : IHttpTelemetryConsumer
 //        , INameResolutionTelemetryConsumer
 //        , INetSecurityTelemetryConsumer
 //        , ISocketsTelemetryConsumer
-//#endif
+#endif
     {
 
     }
