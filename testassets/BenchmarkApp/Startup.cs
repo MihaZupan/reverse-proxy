@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Crank.EventSources;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Yarp.ReverseProxy.Telemetry.Consumption;
 
 namespace BenchmarkApp
 {
@@ -21,6 +22,9 @@ namespace BenchmarkApp
 
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddTelemetryConsumer(new TelemetryConsumer());
+            services.AddTelemetryListeners();
+
             var clusterUrls = _configuration["clusterUrls"];
 
             if (string.IsNullOrWhiteSpace(clusterUrls))
@@ -58,5 +62,19 @@ namespace BenchmarkApp
                 endpoints.MapReverseProxy();
             });
         }
+    }
+
+    public sealed class TelemetryConsumer :
+        IProxyTelemetryConsumer,
+        IKestrelTelemetryConsumer
+#if NET5_0
+        ,
+        IHttpTelemetryConsumer,
+        INameResolutionTelemetryConsumer,
+        INetSecurityTelemetryConsumer,
+        ISocketsTelemetryConsumer
+#endif
+    {
+
     }
 }
