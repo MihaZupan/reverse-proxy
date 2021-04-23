@@ -122,8 +122,8 @@ namespace Yarp.ReverseProxy.Service.Proxy
 
                 // :: Step 4: Send the outgoing request using HttpClient
                 HttpResponseMessage destinationResponse;
-                var requestTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
-                requestTimeoutSource.CancelAfter(requestOptions?.Timeout ?? DefaultTimeout);
+
+                var requestTimeoutSource = PooledCTS.Rent(requestOptions?.Timeout ?? DefaultTimeout, requestAborted);
                 var requestTimeoutToken = requestTimeoutSource.Token;
                 try
                 {
@@ -151,7 +151,7 @@ namespace Yarp.ReverseProxy.Service.Proxy
                 }
                 finally
                 {
-                    requestTimeoutSource.Dispose();
+                    requestTimeoutSource.Return();
                 }
 
                 // Detect connection downgrade, which may be problematic for e.g. gRPC.
