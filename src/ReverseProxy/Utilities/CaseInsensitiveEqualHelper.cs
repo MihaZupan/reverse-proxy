@@ -4,23 +4,18 @@
 using System;
 using System.Collections.Generic;
 
-namespace Microsoft.ReverseProxy.Utilities
+namespace Yarp.ReverseProxy.Utilities
 {
-    internal class CaseInsensitiveEqualHelper
+    internal static class CaseInsensitiveEqualHelper
     {
-        internal static bool Equals(IReadOnlyList<string> list1, IReadOnlyList<string> list2)
+        internal static bool Equals(IReadOnlyList<string>? list1, IReadOnlyList<string>? list2)
         {
             if (ReferenceEquals(list1, list2))
             {
                 return true;
             }
 
-            if ((list1?.Count ?? 0) == 0 && (list2?.Count ?? 0) == 0)
-            {
-                return true;
-            }
-
-            if (list1 != null && list2 == null || list1 == null && list2 != null)
+            if (list1 == null || list2 == null)
             {
                 return false;
             }
@@ -41,19 +36,14 @@ namespace Microsoft.ReverseProxy.Utilities
             return true;
         }
 
-        internal static bool Equals(IList<IDictionary<string, string>> dictionaryList1, IList<IDictionary<string, string>> dictionaryList2)
+        internal static bool Equals(IReadOnlyList<IReadOnlyDictionary<string, string>>? dictionaryList1, IReadOnlyList<IReadOnlyDictionary<string, string>>? dictionaryList2)
         {
             if (ReferenceEquals(dictionaryList1, dictionaryList2))
             {
                 return true;
             }
 
-            if ((dictionaryList1?.Count ?? 0) == 0 && (dictionaryList2?.Count ?? 0) == 0)
-            {
-                return true;
-            }
-
-            if (dictionaryList1 != null && dictionaryList2 == null || dictionaryList1 == null && dictionaryList2 != null)
+            if (dictionaryList1 == null || dictionaryList2 == null)
             {
                 return false;
             }
@@ -74,7 +64,7 @@ namespace Microsoft.ReverseProxy.Utilities
             return true;
         }
 
-        internal static bool Equals(IDictionary<string, string> dictionary1, IDictionary<string, string> dictionary2)
+        internal static bool Equals(IReadOnlyDictionary<string, string>? dictionary1, IReadOnlyDictionary<string, string>? dictionary2)
         {
             return Equals(dictionary1, dictionary2, StringEquals);
         }
@@ -84,19 +74,14 @@ namespace Microsoft.ReverseProxy.Utilities
             return string.Equals(value1, value2, StringComparison.OrdinalIgnoreCase);
         }
 
-        internal static bool Equals<T>(IDictionary<string, T> dictionary1, IDictionary<string, T> dictionary2, Func<T, T, bool> comparer)
+        internal static bool Equals<T>(IReadOnlyDictionary<string, T>? dictionary1, IReadOnlyDictionary<string, T>? dictionary2, Func<T, T, bool> comparer)
         {
             if (ReferenceEquals(dictionary1, dictionary2))
             {
                 return true;
             }
 
-            if ((dictionary1?.Count ?? 0) == 0 && (dictionary2?.Count ?? 0) == 0)
-            {
-                return true;
-            }
-
-            if (dictionary1 != null && dictionary2 == null || dictionary1 == null && dictionary2 != null)
+            if (dictionary1 == null || dictionary2 == null)
             {
                 return false;
             }
@@ -104,6 +89,11 @@ namespace Microsoft.ReverseProxy.Utilities
             if (dictionary1.Count != dictionary2.Count)
             {
                 return false;
+            }
+
+            if (dictionary1.Count == 0)
+            {
+                return true;
             }
 
             foreach (var (key, value1) in dictionary1)
@@ -122,6 +112,21 @@ namespace Microsoft.ReverseProxy.Utilities
             }
 
             return true;
+        }
+
+        internal static int GetHashCode(IReadOnlyList<string>? values)
+        {
+            if (values is null)
+            {
+                return 0;
+            }
+
+            var hashCode = new HashCode();
+            foreach (var value in values)
+            {
+                hashCode.Add(value, StringComparer.OrdinalIgnoreCase);
+            }
+            return hashCode.ToHashCode();
         }
     }
 }

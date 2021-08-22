@@ -1,62 +1,36 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.ReverseProxy.Abstractions;
-using Microsoft.ReverseProxy.Middleware;
+using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Model;
 
-namespace Microsoft.ReverseProxy.Sample
+
+namespace Yarp.Sample
 {
     /// <summary>
-    /// ASP .NET Core pipeline initialization.
+    /// Initialiaztion for ASP.NET using YARP reverse proxy
     /// </summary>
     public class Startup
     {
-        private readonly IConfiguration _configuration;
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Startup" /> class.
-        /// </summary>
-        public Startup(IConfiguration configuration)
-        {
-            _configuration = configuration;
-        }
+        private const string DEBUG_HEADER = "Debug";
+        private const string DEBUG_METADATA_KEY = "debug";
+        private const string DEBUG_VALUE = "true";
 
         /// <summary>
         /// This method gets called by the runtime. Use this method to add services to the container.
         /// </summary>
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddControllers();
-            var routes = new[]
-            {
-                new ProxyRoute()
-                {
-                    RouteId = "route1",
-                    ClusterId = "cluster1",
-                    Match =
-                    {
-                        Path = "{**catch-all}"
-                    }
-                }
-            };
-            var clusters = new[]
-            {
-                new Cluster()
-                {
-                    Id = "cluster1",
-                    Destinations =
-                    {
-                        { "destination1", new Destination() { Address = "https://localhost:10000" } }
-                    }
-                }
-            };
-
+            // Specify a custom proxy config provider, in this case defined in InMemoryConfigProvider.cs
+            // Programatically creating route and cluster configs. This allows loading the data from an arbitrary source.
             services.AddReverseProxy()
-                .LoadFromMemory(routes, clusters)
-                .AddProxyConfigFilter<CustomConfigFilter>();
+                .LoadFromMemory(GetRoutes(), GetClusters());
         }
 
         /// <summary>
@@ -65,31 +39,83 @@ namespace Microsoft.ReverseProxy.Sample
         public void Configure(IApplicationBuilder app)
         {
             app.UseRouting();
-            app.UseAuthorization();
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapControllers();
+                // We can customize the proxy pipeline and add/remove/replace steps
                 endpoints.MapReverseProxy(proxyPipeline =>
                 {
-                    // Custom endpoint selection
-                    proxyPipeline.Use((context, next) =>
-                    {
-                        var someCriteria = false; // MeetsCriteria(context);
-                        if (someCriteria)
-                        {
-                            var availableDestinationsFeature = context.Features.Get<IReverseProxyFeature>();
-                            var destination = availableDestinationsFeature.AvailableDestinations[0]; // PickDestination(availableDestinationsFeature.Destinations);
-                            // Load balancing will no-op if we've already reduced the list of available destinations to 1.
-                            availableDestinationsFeature.AvailableDestinations = destination;
-                        }
-
-                        return next();
-                    });
-                    proxyPipeline.UseAffinitizedDestinationLookup();
-                    proxyPipeline.UseProxyLoadBalancing();
-                    proxyPipeline.UseRequestAffinitizer();
+                    // Use a custom proxy middleware, defined below
+                    proxyPipeline.Use(MyCustomProxyStep);
+                    // Don't forget to include these two middleware when you make a custom proxy pipeline (if you need them).
+                    proxyPipeline.UseSessionAffinity();
+                    proxyPipeline.UseLoadBalancing();
                 });
             });
+        }
+
+        private RouteConfig[] GetRoutes()
+        {
+            return new[]
+            {
+                new RouteConfig()
+                {
+                    RouteId = "route1",
+                    ClusterId = "cluster1",
+                    Match = new RouteMatch
+                    {
+                        // Path or Hosts are required for each route. This catch-all pattern matches all request paths.
+                        Path = "{**catch-all}"
+                    }
+                }
+            };
+        }
+        private ClusterConfig[] GetClusters()
+        {
+            var debugMetadata = new Dictionary<string, string>();
+            debugMetadata.Add(DEBUG_METADATA_KEY, DEBUG_VALUE);
+
+            return new[]
+            {
+                new ClusterConfig()
+                {
+                    ClusterId = "cluster1",
+                    SessionAffinity = new SessionAffinityConfig { Enabled = true, Policy = "Cookie", AffinityKeyName = ".Yarp.ReverseProxy.Affinity" },
+                    Destinations = new Dictionary<string, DestinationConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        { "destination1", new DestinationConfig() { Address = "https://example.com" } },
+                        { "debugdestination1", new DestinationConfig() {
+                            Address = "https://bing.com",
+                            Metadata = debugMetadata  }
+                        },
+                    }
+                }
+            };
+        }
+
+
+        /// <summary>
+        /// Custom proxy step that filters destinations based on a header in the inbound request
+        /// Looks at each destination metadata, and filters in/out based on their debug flag and the inbound header
+        /// </summary>
+        public Task MyCustomProxyStep(HttpContext context, Func<Task> next)
+        {
+            // Can read data from the request via the context
+            var useDebugDestinations = context.Request.Headers.TryGetValue(DEBUG_HEADER, out var headerValues) && headerValues.Count == 1 && headerValues[0] == DEBUG_VALUE;
+
+            // The context also stores a ReverseProxyFeature which holds proxy specific data such as the cluster, route and destinations
+            var availableDestinationsFeature = context.Features.Get<IReverseProxyFeature>();
+            var filteredDestinations = new List<DestinationState>();
+
+            // Filter destinations based on criteria
+            foreach (var d in availableDestinationsFeature.AvailableDestinations)
+            {
+                //Todo: Replace with a lookup of metadata - but not currently exposed correctly here
+                if (d.DestinationId.Contains("debug") == useDebugDestinations) { filteredDestinations.Add(d); }
+            }
+            availableDestinationsFeature.AvailableDestinations = filteredDestinations;
+
+            // Important - required to move to the next step in the proxy pipeline
+            return next();
         }
     }
 }

@@ -1,14 +1,15 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Security;
 using System.Security.Authentication;
 using Xunit;
 
-namespace Microsoft.ReverseProxy.Utilities.Tls
+namespace Yarp.ReverseProxy.Utilities.Tls.Tests
 {
     public class TlsFrameHelperTests
     {
@@ -34,11 +35,15 @@ namespace Microsoft.ReverseProxy.Utilities.Tls
 
         private void InvalidClientHello(byte[] clientHello, int id, bool shouldPass)
         {
-            string ret = TlsFrameHelper.GetServerName(clientHello);
+            var ret = TlsFrameHelper.GetServerName(clientHello);
             if (shouldPass)
+            {
                 Assert.NotNull(ret);
+            }
             else
+            {
                 Assert.Null(ret);
+            }
         }
 
         [Fact]
@@ -62,6 +67,20 @@ namespace Microsoft.ReverseProxy.Utilities.Tls
             Assert.Equal(SslProtocols.Tls, info.Header.Version);
             Assert.Equal(SslProtocols.Tls|SslProtocols.Tls12, info.SupportedVersions);
             Assert.Equal(TlsFrameHelper.ApplicationProtocolInfo.Http11 | TlsFrameHelper.ApplicationProtocolInfo.Http2, info.ApplicationProtocols);
+
+            Assert.Equal(46, info.TlsCipherSuites.Length);
+            int expectedCiphersCount = 0;
+            for (int i = 0 ; i < info.TlsCipherSuites.Length; i++)
+            {
+                // spotcheck on ciphers
+                if (info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384 ||
+                    info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_RSA_WITH_AES_128_GCM_SHA256 ||
+                    info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_RSA_WITH_RC4_128_SHA)
+                {
+                    expectedCiphersCount++;
+                }
+            }
+            Assert.Equal(3, expectedCiphersCount);
         }
 
         [Fact]
@@ -73,6 +92,20 @@ namespace Microsoft.ReverseProxy.Utilities.Tls
             Assert.Equal(SslProtocols.Tls, info.Header.Version);
             Assert.Equal(SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13, info.SupportedVersions);
             Assert.Equal(TlsFrameHelper.ApplicationProtocolInfo.Other, info.ApplicationProtocols);
+
+            Assert.Equal(6, info.TlsCipherSuites.Length);
+            int expectedCiphersCount = 0;
+            for (int i = 0; i < info.TlsCipherSuites.Length; i++)
+            {
+                if (info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_AES_256_GCM_SHA384 ||
+                    info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_CHACHA20_POLY1305_SHA256 ||
+                    info.TlsCipherSuites.Span[i] == TlsCipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384)
+                {
+                    expectedCiphersCount++;
+                }
+            }
+            Assert.Equal(3, expectedCiphersCount);
+
         }
 
         [Fact]

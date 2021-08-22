@@ -1,18 +1,34 @@
 - name: Getting Started
-  href: getting_started.md
+  href: getting-started.md
 - name: Supported Runtimes
   href: runtimes.md
 - name: Configuration Files
-  href: configfiles.md
+  href: config-files.md
 - name: Configuration Providers
-  href: configproviders.md
-- name: Proxy HTTP client configuration
-  href: proxyhttpclientconfig.md
+  href: config-providers.md
+- name: Direct Forwarding
+  href: direct-forwarding.md
+- name: HTTP client configuration
+  href: http-client-config.md
+- name: Header Routing
+  href: header-routing.md
 - name: Authentication and Authorization
   href: authn-authz.md
 - name: Cross-Origin Requests (CORS)
   href: cors.md
 - name: Session Affinity
   href: session-affinity.md
+- name: Load Balancing
+  href: load-balancing.md
+- name: Middleware
+  href: middleware.md
 - name: Transforms
   href: transforms.md
+- name: Destinations Health Checks
+  href: dests-health-checks.md
+- name: gRPC
+  href: grpc.md
+- name: Service Fabric Integration
+  href: service-fabric-int.md
+- name: Packages references
+  href: packages-refs.md

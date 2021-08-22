@@ -3,9 +3,9 @@
 
 using System.Threading;
 
-namespace Microsoft.ReverseProxy.Utilities
+namespace Yarp.ReverseProxy.Utilities
 {
-    internal class AtomicCounter
+    internal sealed class AtomicCounter
     {
         private int _value;
 
@@ -31,6 +31,14 @@ namespace Microsoft.ReverseProxy.Utilities
         public int Decrement()
         {
             return Interlocked.Decrement(ref _value);
+        }
+
+        /// <summary>
+        /// Atomically resets the counter value to 0.
+        /// </summary>
+        public void Reset()
+        {
+            Interlocked.Exchange(ref _value, 0);
         }
     }
 }
