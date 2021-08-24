@@ -38,20 +38,36 @@ namespace Yarp.ReverseProxy.Health.Tests
 
             timerFactory.FireTimer(1);
             Assert.Same(entity1, lastInvokedEntity);
+            Assert.Equal(3, timerFactory.Count);
+            timerFactory.AssertTimerDisposed(1);
+            timerFactory.VerifyTimer(2, Period1);
 
             timerFactory.FireTimer(0);
             Assert.Same(entity0, lastInvokedEntity);
+            Assert.Equal(4, timerFactory.Count);
+            timerFactory.AssertTimerDisposed(0);
+            timerFactory.VerifyTimer(3, Period0);
 
-            timerFactory.FireTimer(1);
+            timerFactory.FireTimer(2);
             Assert.Same(entity1, lastInvokedEntity);
+            Assert.Equal(5, timerFactory.Count);
+            timerFactory.AssertTimerDisposed(2);
+            timerFactory.VerifyTimer(4, Period1);
 
-            timerFactory.FireTimer(0);
+            timerFactory.FireTimer(3);
             Assert.Same(entity0, lastInvokedEntity);
+            Assert.Equal(6, timerFactory.Count);
+            timerFactory.AssertTimerDisposed(3);
+            timerFactory.VerifyTimer(5, Period0);
 
             VerifyEntities(scheduler, entity0, entity1);
-            Assert.Equal(2, timerFactory.Count);
+            Assert.Equal(6, timerFactory.Count);
             timerFactory.VerifyTimer(0, Period0);
             timerFactory.VerifyTimer(1, Period1);
+            timerFactory.VerifyTimer(2, Period1);
+            timerFactory.VerifyTimer(3, Period0);
+            timerFactory.VerifyTimer(4, Period1);
+            timerFactory.VerifyTimer(5, Period0);
         }
 
         [Fact]
@@ -68,17 +84,18 @@ namespace Yarp.ReverseProxy.Health.Tests
             }, autoStart: false, runOnce: true, timerFactory);
 
             scheduler.ScheduleEntity(entity0, TimeSpan.FromMilliseconds(Period0));
-            scheduler.ScheduleEntity(entity1, TimeSpan.FromMilliseconds(Period1));
-            Assert.Equal(2, timerFactory.Count);
-            timerFactory.VerifyTimer(0, Timeout.Infinite);
-            timerFactory.VerifyTimer(1, Timeout.Infinite);
+            Assert.Equal(0, timerFactory.Count);
 
             scheduler.Start();
 
-            VerifyEntities(scheduler, entity0, entity1);
-            Assert.Equal(2, timerFactory.Count);
+            Assert.Equal(1, timerFactory.Count);
             timerFactory.VerifyTimer(0, Period0);
+
+            scheduler.ScheduleEntity(entity1, TimeSpan.FromMilliseconds(Period1));
+            Assert.Equal(2, timerFactory.Count);
             timerFactory.VerifyTimer(1, Period1);
+
+            VerifyEntities(scheduler, entity0, entity1);
 
             timerFactory.FireTimer(1);
 
@@ -113,19 +130,20 @@ namespace Yarp.ReverseProxy.Health.Tests
             scheduler.ScheduleEntity(entity1, TimeSpan.FromMilliseconds(Period1));
 
             VerifyEntities(scheduler, entity0, entity1);
-            Assert.Equal(2, timerFactory.Count);
-            timerFactory.VerifyTimer(0, Timeout.Infinite);
-            timerFactory.VerifyTimer(1, Timeout.Infinite);
+            Assert.Equal(0, timerFactory.Count);
 
             scheduler.UnscheduleEntity(entity1);
             VerifyEntities(scheduler, entity0);
-            timerFactory.AssertTimerDisposed(1);
+            Assert.Equal(0, timerFactory.Count);
 
             scheduler.Start();
 
+            Assert.Equal(1, timerFactory.Count);
             timerFactory.VerifyTimer(0, Period0);
 
             timerFactory.FireTimer(0);
+            timerFactory.AssertTimerDisposed(0);
+            timerFactory.VerifyTimer(1, Period0);
 
             Assert.Same(entity0, lastInvokedEntity);
 
@@ -182,11 +200,11 @@ namespace Yarp.ReverseProxy.Health.Tests
             }, autoStart: false, runOnce: false, timerFactory);
 
             scheduler.ScheduleEntity(entity, TimeSpan.FromMilliseconds(Period0));
-            timerFactory.VerifyTimer(0, Timeout.Infinite);
+            Assert.Equal(0, timerFactory.Count);
 
             var newPeriod = TimeSpan.FromMilliseconds(Period1);
             scheduler.ChangePeriod(entity, newPeriod);
-            timerFactory.VerifyTimer(0, Timeout.Infinite);
+            Assert.Equal(0, timerFactory.Count);
 
             scheduler.Start();
 
@@ -198,7 +216,7 @@ namespace Yarp.ReverseProxy.Health.Tests
         }
 
         [Fact]
-        public void ChangePeriod_TimerStartedPeriodChangedAfterFirstCall_PeriodChangedAfterNextCall()
+        public void ChangePeriod_TimerStartedPeriodChangedAfterFirstCall_PeriodChangedBeforeNextCall()
         {
             var entity = new Entity { Id = "entity0" };
             Entity lastInvokedEntity = null;
@@ -213,15 +231,17 @@ namespace Yarp.ReverseProxy.Health.Tests
             timerFactory.VerifyTimer(0, Period0);
 
             timerFactory.FireTimer(0);
-            timerFactory.VerifyTimer(0, Period0);
+            timerFactory.AssertTimerDisposed(0);
+            timerFactory.VerifyTimer(1, Period0);
             Assert.Same(entity, lastInvokedEntity);
 
-            var newPeriod = TimeSpan.FromMilliseconds(Period1);
-            scheduler.ChangePeriod(entity, newPeriod);
-            timerFactory.VerifyTimer(0, Period0);
+            scheduler.ChangePeriod(entity, TimeSpan.FromMilliseconds(Period1));
+            timerFactory.AssertTimerDisposed(1);
+            timerFactory.VerifyTimer(2, Period1);
 
-            timerFactory.FireTimer(0);
-            timerFactory.VerifyTimer(0, Period1);
+            timerFactory.FireTimer(2);
+            timerFactory.AssertTimerDisposed(2);
+            timerFactory.VerifyTimer(3, Period1);
             Assert.Same(entity, lastInvokedEntity);
         }
 

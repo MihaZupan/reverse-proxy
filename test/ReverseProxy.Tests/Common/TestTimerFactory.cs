@@ -11,18 +11,19 @@ namespace Yarp.ReverseProxy.Common.Tests
 {
     internal class TestTimerFactory : ITimerFactory, IDisposable
     {
-        private readonly List<TimerStub> _timers = new List<TimerStub>();
+        public readonly List<TimerStub> Timers = new();
 
-        public int Count => _timers.Count;
+        public int Count => Timers.Count;
 
         public void FireTimer(int idx)
         {
-            _timers[idx].Fire();
+            Timers[idx].Fire();
         }
 
         public void FireAll()
         {
-            for (var i = 0; i < _timers.Count; i++)
+            var timers = Timers.Count;
+            for (var i = 0; i < timers; i++)
             {
                 FireTimer(i);
             }
@@ -30,26 +31,26 @@ namespace Yarp.ReverseProxy.Common.Tests
 
         public void VerifyTimer(int idx, long dueTime)
         {
-            Assert.Equal(dueTime, _timers[idx].DueTime);
+            Assert.Equal(dueTime, Timers[idx].DueTime);
         }
 
         public void AssertTimerDisposed(int idx)
         {
-            Assert.True(_timers[idx].IsDisposed);
+            Assert.True(Timers[idx].IsDisposed);
         }
 
-        public ITimer CreateTimer(TimerCallback callback, object state, long dueTime, long period)
+        public IDisposable CreateTimer(TimerCallback callback, object state, long dueTime, long period)
         {
             Assert.Equal(Timeout.Infinite, period);
             var timer = new TimerStub(callback, state, dueTime, period);
-            _timers.Add(timer);
+            Timers.Add(timer);
             return timer;
         }
 
         public void Dispose()
         {}
 
-        private class TimerStub : ITimer
+        public sealed class TimerStub : IDisposable
         {
             public TimerStub(TimerCallback callback, object state, long dueTime, long period)
             {
@@ -69,15 +70,12 @@ namespace Yarp.ReverseProxy.Common.Tests
 
             public bool IsDisposed { get; private set; }
 
-            public void Change(long dueTime, long period)
-            {
-                DueTime = dueTime;
-                Period = period;
-            }
-
             public void Fire()
             {
-                Callback(State);
+                if (!IsDisposed)
+                {
+                    Callback(State);
+                }
             }
 
             public void Dispose()

@@ -71,7 +71,7 @@ namespace Yarp.ReverseProxy.Health
         {
             // Ensure the Timer has a weak reference to this scheduler; otherwise,
             // EntityActionScheduler can be rooted by the Timer implementation.
-            var entry = new SchedulerEntry(_weakThisRef, entity, (long)period.TotalMilliseconds, _timerFactory);
+            var entry = new SchedulerEntry(_weakThisRef, entity, (long)period.TotalMilliseconds);
 
             if (_entries.TryAdd(entity, entry))
             {
@@ -95,10 +95,6 @@ namespace Yarp.ReverseProxy.Health
             if (_entries.TryGetValue(entity, out var entry))
             {
                 entry.ChangePeriod((long)newPeriod.TotalMilliseconds);
-                if (Volatile.Read(ref _status) == Started)
-                {
-                    entry.EnsureStarted();
-                }
             }
             else
             {
@@ -121,9 +117,22 @@ namespace Yarp.ReverseProxy.Health
 
         private sealed class SchedulerEntry : IDisposable
         {
+            // Timer.Change is racy as the callback could already be scheduled while we are starting the timer again.
+            // This could result in the callback executing multiple times concurrently.
+            // To avoid this, always create a new timer and pass a version as state.
             private static readonly TimerCallback _timerCallback = static async state =>
             {
-                var entry = (SchedulerEntry)state!;
+                var (entry, version) = ((SchedulerEntry, int))state!;
+
+                lock (entry)
+                {
+                    if (entry._version != version)
+                    {
+                        return;
+                    }
+
+                    entry._runningCallback = true;
+                }
 
                 if (!entry._scheduler.TryGetTarget(out var scheduler))
                 {
@@ -144,7 +153,11 @@ namespace Yarp.ReverseProxy.Health
                     if (!scheduler._runOnce && scheduler._entries.Contains(pair))
                     {
                         // This entry has not been unscheduled - set the timer again
-                        entry.SetTimer(isRestart: true);
+                        lock (entry)
+                        {
+                            entry._runningCallback = false;
+                            entry.SetTimer();
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -161,15 +174,53 @@ namespace Yarp.ReverseProxy.Health
 
             private readonly WeakReference<EntityActionScheduler<T>> _scheduler;
             private readonly T _entity;
-            private readonly ITimer _timer;
+            private IDisposable? _timer;
             private long _period;
-            private bool _running;
+            private int _version;
+            private bool _runningCallback;
+            private bool _disposed;
 
-            public SchedulerEntry(WeakReference<EntityActionScheduler<T>> scheduler, T entity, long period, ITimerFactory timerFactory)
+            public SchedulerEntry(WeakReference<EntityActionScheduler<T>> scheduler, T entity, long period)
             {
                 _scheduler = scheduler;
                 _entity = entity;
                 _period = period;
+            }
+
+            public void ChangePeriod(long newPeriod)
+            {
+                lock (this)
+                {
+                    _period = newPeriod;
+                    if (_timer is not null)
+                    {
+                        SetTimer();
+                    }
+                }
+            }
+
+            public void EnsureStarted()
+            {
+                lock (this)
+                {
+                    if (_timer is null)
+                    {
+                        SetTimer();
+                    }
+                }
+            }
+
+            private void SetTimer()
+            {
+                Debug.Assert(Monitor.IsEntered(this));
+
+                if (_disposed || _runningCallback || !_scheduler.TryGetTarget(out var scheduler))
+                {
+                    return;
+                }
+
+                _timer?.Dispose();
+                _version++;
 
                 // Don't capture the current ExecutionContext and its AsyncLocals onto the timer causing them to live forever
                 var restoreFlow = false;
@@ -181,7 +232,7 @@ namespace Yarp.ReverseProxy.Health
                         restoreFlow = true;
                     }
 
-                    _timer = timerFactory.CreateTimer(_timerCallback, this, Timeout.Infinite, Timeout.Infinite);
+                    _timer = scheduler._timerFactory.CreateTimer(_timerCallback, (this, _version), _period, Timeout.Infinite);
                 }
                 finally
                 {
@@ -192,46 +243,16 @@ namespace Yarp.ReverseProxy.Health
                 }
             }
 
-            public void ChangePeriod(long newPeriod) => Volatile.Write(ref _period, newPeriod);
-
-            public void EnsureStarted() => SetTimer(isRestart: false);
-
-            private void SetTimer(bool isRestart)
-            {
-                long period;
-
-                lock (this)
-                {
-                    period = Volatile.Read(ref _period);
-
-                    if (isRestart)
-                    {
-                        Debug.Assert(_running);
-                        _running = false;
-                    }
-
-                    if (period == Timeout.Infinite || _running)
-                    {
-                        return;
-                    }
-
-                    _running = true;
-                }
-
-                try
-                {
-                    _timer.Change(period, Timeout.Infinite);
-                }
-                catch (ObjectDisposedException)
-                {
-                    // It can be thrown if the timer has been already disposed.
-                    // Just suppress it.
-                }
-            }
-
             public void Dispose()
             {
-                _timer.Dispose();
+                lock (this)
+                {
+                    if (!_disposed)
+                    {
+                        _disposed = true;
+                        _timer?.Dispose();
+                    }
+                }
             }
         }
     }
