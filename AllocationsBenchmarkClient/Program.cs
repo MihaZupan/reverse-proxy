@@ -1,6 +1,12 @@
 const int Runs = 3;
 const int Iterations = 10_000;
 
+// cd C:\MihaZupan\reverse-proxy\testassets\TestServer
+// C:\MihaZupan\reverse-proxy\.dotnet\dotnet run --urls "http://localhost:10010;http://localhost:10011"
+
+// cd C:\MihaZupan\reverse-proxy\AllocationsBenchmarkClient
+// C:\MihaZupan\reverse-proxy\.dotnet\dotnet run
+
 var uri = new Uri("http://localhost:5000");
 
 while (true)
