@@ -3,6 +3,8 @@
 
 using System;
 using System.Buffers;
+using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,42 +20,26 @@ namespace Yarp.ReverseProxy.Forwarder
         // Based on performance investigations, see https://github.com/microsoft/reverse-proxy/pull/330#issuecomment-758851852.
         private const int DefaultBufferSize = 65536;
 
-        private static readonly TimeSpan TimeBetweenTransferringEvents = TimeSpan.FromSeconds(1);
-
-        /// <inheritdoc/>
-        /// <remarks>
-        /// Based on <c>Microsoft.AspNetCore.Http.StreamCopyOperationInternal.CopyToAsync</c>.
-        /// See: <see href="https://github.com/dotnet/aspnetcore/blob/080660967b6043f731d4b7163af9e9e6047ef0c4/src/Http/Shared/StreamCopyOperationInternal.cs"/>.
-        /// </remarks>
-        public static async ValueTask<(StreamCopyResult, Exception?)> CopyAsync(bool isRequest, Stream input, Stream output, IClock clock, ActivityCancellationTokenSource activityToken, CancellationToken cancellation)
+        public static ValueTask<(StreamCopyResult, Exception?)> CopyAsync(bool isRequest, Stream input, Stream output, IClock clock, ActivityCancellationTokenSource activityToken, CancellationToken cancellation)
         {
-            _ = input ?? throw new ArgumentNullException(nameof(input));
-            _ = output ?? throw new ArgumentNullException(nameof(output));
+            Debug.Assert(input is not null);
+            Debug.Assert(output is not null);
+            Debug.Assert(clock is not null);
+            Debug.Assert(activityToken is not null);
 
-            var telemetryEnabled = ForwarderTelemetry.Log.IsEnabled();
+            var telemetry = ForwarderTelemetry.Log.IsEnabled(EventLevel.Informational, EventKeywords.All)
+                ? new StreamCopierTelemetry(isRequest, clock)
+                : null;
 
+            return CopyAsync(input, output, telemetry, activityToken, cancellation);
+        }
+
+        private static async ValueTask<(StreamCopyResult, Exception?)> CopyAsync(Stream input, Stream output, StreamCopierTelemetry? telemetry, ActivityCancellationTokenSource activityToken, CancellationToken cancellation)
+        {
             var buffer = ArrayPool<byte>.Shared.Rent(DefaultBufferSize);
-            var reading = true;
-
-            long contentLength = 0;
-            long iops = 0;
-            var readTime = TimeSpan.Zero;
-            var writeTime = TimeSpan.Zero;
-            var firstReadTime = TimeSpan.FromMilliseconds(-1);
-
+            var read = 0;
             try
             {
-                var lastTime = TimeSpan.Zero;
-                var nextTransferringEvent = TimeSpan.Zero;
-
-                if (telemetryEnabled)
-                {
-                    ForwarderTelemetry.Log.ForwarderStage(isRequest ? ForwarderStage.RequestContentTransferStart : ForwarderStage.ResponseContentTransferStart);
-
-                    lastTime = clock.GetStopwatchTime();
-                    nextTransferringEvent = lastTime + TimeBetweenTransferringEvents;
-                }
-
                 while (true)
                 {
                     if (cancellation.IsCancellationRequested)
@@ -61,73 +47,56 @@ namespace Yarp.ReverseProxy.Forwarder
                         return (StreamCopyResult.Canceled, new OperationCanceledException(cancellation));
                     }
 
-                    reading = true;
-                    var read = 0;
                     try
                     {
+#if NET6_0_OR_GREATER
+                        if (buffer is null)
+                        {
+                            await input.ReadAsync(Memory<byte>.Empty, cancellation);
+
+                            buffer = ArrayPool<byte>.Shared.Rent(DefaultBufferSize);
+                        }
+#endif
+
                         read = await input.ReadAsync(buffer.AsMemory(), cancellation);
+
+                        // End of the source stream.
+                        if (read == 0)
+                        {
+                            return (StreamCopyResult.Success, null);
+                        }
 
                         // Success, reset the activity monitor.
                         activityToken.ResetTimeout();
                     }
                     finally
                     {
-                        if (telemetryEnabled)
-                        {
-                            contentLength += read;
-                            iops++;
-
-                            var readStop = clock.GetStopwatchTime();
-                            var currentReadTime = readStop - lastTime;
-                            lastTime = readStop;
-                            readTime += currentReadTime;
-                            if (firstReadTime.Ticks < 0)
-                            {
-                                firstReadTime = currentReadTime;
-                            }
-                        }
+                        telemetry?.AfterRead(read);
                     }
 
-                    // End of the source stream.
-                    if (read == 0)
-                    {
-                        return (StreamCopyResult.Success, null);
-                    }
-
-                    if (cancellation.IsCancellationRequested)
-                    {
-                        return (StreamCopyResult.Canceled, new OperationCanceledException(cancellation));
-                    }
-
-                    reading = false;
                     try
                     {
                         await output.WriteAsync(buffer.AsMemory(0, read), cancellation);
 
+#if NET6_0_OR_GREATER
+                        // If the whole read buffer was filled, there is a very high chance the next read will complete synchronously
+                        // Assume there is more data available and don't return the buffer yet
+                        if (read != buffer.Length)
+                        {
+                            var bufferToReturn = buffer;
+                            buffer = null;
+                            ArrayPool<byte>.Shared.Return(bufferToReturn);
+                        }
+#endif
+
+                        read = 0;
+
                         // Success, reset the activity monitor.
                         activityToken.ResetTimeout();
                     }
                     finally
                     {
-                        if (telemetryEnabled)
-                        {
-                            var writeStop = clock.GetStopwatchTime();
-                            writeTime += writeStop - lastTime;
-                            lastTime = writeStop;
-                            if (lastTime >= nextTransferringEvent)
-                            {
-                                ForwarderTelemetry.Log.ContentTransferring(
-                                    isRequest,
-                                    contentLength,
-                                    iops,
-                                    readTime.Ticks,
-                                    writeTime.Ticks);
-
-                                // Avoid attributing the time taken by logging ContentTransferring to the next read call
-                                lastTime = clock.GetStopwatchTime();
-                                nextTransferringEvent = lastTime + TimeBetweenTransferringEvents;
-                            }
-                        }
+                        telemetry?.AfterWrite();
                     }
                 }
             }
@@ -137,23 +106,90 @@ namespace Yarp.ReverseProxy.Forwarder
             }
             catch (Exception ex)
             {
-                return (reading ? StreamCopyResult.InputError : StreamCopyResult.OutputError, ex);
+                return (read == 0 ? StreamCopyResult.InputError : StreamCopyResult.OutputError, ex);
             }
             finally
             {
-                // We can afford the perf impact of clearArray == true since we only do this twice per request.
-                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
-
-                if (telemetryEnabled)
+                if (buffer is not null)
                 {
-                    ForwarderTelemetry.Log.ContentTransferred(
-                        isRequest,
-                        contentLength,
-                        iops,
-                        readTime.Ticks,
-                        writeTime.Ticks,
-                        Math.Max(0, firstReadTime.Ticks));
+                    ArrayPool<byte>.Shared.Return(buffer);
                 }
+
+                telemetry?.Stop();
+            }
+        }
+
+        private sealed class StreamCopierTelemetry
+        {
+            private static readonly TimeSpan _timeBetweenTransferringEvents = TimeSpan.FromSeconds(1);
+
+            private readonly bool _isRequest;
+            private readonly IClock _clock;
+            private long _contentLength;
+            private long _iops;
+            private TimeSpan _readTime;
+            private TimeSpan _writeTime;
+            private TimeSpan _firstReadTime;
+            private TimeSpan _lastTime;
+            private TimeSpan _nextTransferringEvent;
+
+            public StreamCopierTelemetry(bool isRequest, IClock clock)
+            {
+                _isRequest = isRequest;
+                _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+                _firstReadTime = new TimeSpan(-1);
+
+                ForwarderTelemetry.Log.ForwarderStage(isRequest ? ForwarderStage.RequestContentTransferStart : ForwarderStage.ResponseContentTransferStart);
+
+                _lastTime = clock.GetStopwatchTime();
+                _nextTransferringEvent = _lastTime + _timeBetweenTransferringEvents;
+            }
+
+            public void AfterRead(int read)
+            {
+                _contentLength += read;
+                _iops++;
+
+                var readStop = _clock.GetStopwatchTime();
+                var currentReadTime = readStop - _lastTime;
+                _lastTime = readStop;
+                _readTime += currentReadTime;
+                if (_firstReadTime.Ticks < 0)
+                {
+                    _firstReadTime = currentReadTime;
+                }
+            }
+
+            public void AfterWrite()
+            {
+                var writeStop = _clock.GetStopwatchTime();
+                _writeTime += writeStop - _lastTime;
+                _lastTime = writeStop;
+
+                if (writeStop >= _nextTransferringEvent)
+                {
+                    ForwarderTelemetry.Log.ContentTransferring(
+                        _isRequest,
+                        _contentLength,
+                        _iops,
+                        _readTime.Ticks,
+                        _writeTime.Ticks);
+
+                    // Avoid attributing the time taken by logging ContentTransferring to the next read call
+                    _lastTime = _clock.GetStopwatchTime();
+                    _nextTransferringEvent = _lastTime + _timeBetweenTransferringEvents;
+                }
+            }
+
+            public void Stop()
+            {
+                ForwarderTelemetry.Log.ContentTransferred(
+                    _isRequest,
+                    _contentLength,
+                    _iops,
+                    _readTime.Ticks,
+                    _writeTime.Ticks,
+                    Math.Max(0, _firstReadTime.Ticks));
             }
         }
     }
