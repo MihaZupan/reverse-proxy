@@ -1,7 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SampleServer
@@ -32,11 +38,32 @@ namespace SampleServer
 
             app.UseWebSockets();
 
-            app.UseRouting();
-            app.UseEndpoints(endpoints =>
+            app.Map("/websocket", app => app.Use(next => context => DoWebSocketsAsync(context)));
+            app.Map("/get", app => app.Use(next => context => DoGetRequestAsync(context)));
+        }
+
+        private static readonly byte[] _helloWorld = Encoding.UTF8.GetBytes("Hello world!");
+        private static readonly byte[] _receiveBuffer = new byte[8192];
+
+        private static async Task DoGetRequestAsync(HttpContext context)
+        {
+            await context.Response.Body.WriteAsync(_helloWorld);
+        }
+
+        private static async Task DoWebSocketsAsync(HttpContext context)
+        {
+            try
             {
-                endpoints.MapControllers();
-            });
+                using (var webSocket = await context.WebSockets.AcceptWebSocketAsync())
+                {
+                    await webSocket.SendAsync(_helloWorld, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+                    while (!(await webSocket.ReceiveAsync(_receiveBuffer, CancellationToken.None)).EndOfMessage) { }
+
+                    await Task.Delay(TimeSpan.FromMinutes(10), context.RequestAborted);
+                }
+            }
+            catch when (context.RequestAborted.IsCancellationRequested) { }
         }
     }
 }

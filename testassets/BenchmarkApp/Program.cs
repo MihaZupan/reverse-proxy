@@ -23,6 +23,10 @@ namespace BenchmarkApp
                             httpsOptions.ServerCertificate = new X509Certificate2(Path.Combine(context.HostingEnvironment.ContentRootPath, "testCert.pfx"), "testPassword");
                         });
                     })
+                    .UseSockets(sockets =>
+                    {
+                        sockets.WaitForDataBeforeAllocatingBuffer = false;
+                    })
                    .UseStartup<Startup>());
     }
 }

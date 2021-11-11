@@ -1093,7 +1093,7 @@ namespace Yarp.ReverseProxy.Forwarder.Tests
             httpContext.Request.Method = "POST";
             httpContext.Request.Body = new CallbackReadStream(async (memory, ct) =>
             {
-                if (reads >= expectedReads)
+                if (memory.Length == 0 || reads >= expectedReads)
                 {
                     return 0;
                 }

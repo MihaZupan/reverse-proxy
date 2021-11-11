@@ -11,7 +11,7 @@ namespace Yarp.ReverseProxy.Utilities
 {
     // Taken from https://github.com/dotnet/runtime/blob/00f37bc13b4edbba1afca9e98d74432a94f5192f/src/libraries/Common/src/System/IO/DelegatingStream.cs
     // Forwards all calls to an inner stream except where overridden in a derived class.
-    internal abstract class DelegatingStream : Stream
+    public abstract class DelegatingStream : Stream
     {
         private readonly Stream _innerStream;
 
