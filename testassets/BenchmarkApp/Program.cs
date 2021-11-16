@@ -23,5 +23,11 @@ public class Program
                         httpsOptions.ServerCertificate = new X509Certificate2(Path.Combine(context.HostingEnvironment.ContentRootPath, "testCert.pfx"), "testPassword");
                     });
                 })
+                .UseSockets(options =>
+                {
+#if NET5_0_OR_GREATER
+                    options.WaitForDataBeforeAllocatingBuffer = false;
+#endif
+                })
                 .UseStartup<Startup>());
 }
