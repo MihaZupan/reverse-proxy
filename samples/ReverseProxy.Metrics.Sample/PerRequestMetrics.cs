@@ -1,10 +1,25 @@
 using System;
-using System.Threading;
-using Yarp.ReverseProxy.Forwarder;
+using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+using Yarp.ReverseProxy.Forwarder;
 
 namespace Yarp.Sample
 {
+    public sealed class MyCustomHandler : DelegatingHandler
+    {
+        public MyCustomHandler(HttpMessageHandler innerHandler) : base(innerHandler) { }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            PerRequestMetrics.Current.MessageHandler = this;
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
     public class PerRequestMetrics
     {
         private static readonly AsyncLocal<PerRequestMetrics> _local = new AsyncLocal<PerRequestMetrics>();
@@ -21,6 +36,11 @@ namespace Yarp.Sample
         // Time the request was started via the pipeline
         public DateTime StartTime { get; set; }
 
+        /// <summary>
+        /// <see cref="HttpMessageHandler"/> that processed the request to the backend.
+        /// </summary>
+        [JsonIgnore]
+        public MyCustomHandler MessageHandler { get; set; }
 
         // Offset Tics for each part of the proxy operation
         public float RouteInvokeOffset { get; set; }
