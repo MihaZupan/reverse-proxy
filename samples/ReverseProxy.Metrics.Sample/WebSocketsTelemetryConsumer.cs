@@ -15,7 +15,11 @@ namespace Yarp.Sample
 
         public void OnWebSocketClosed(DateTime timestamp, DateTime establishedTime, WebSocketCloseReason closeReason, long messagesRead, long messagesWritten)
         {
-            _logger.LogInformation($"WebSocket connection closed ({closeReason}) after reading {messagesRead} and writing {messagesWritten} messages over {(timestamp - establishedTime).TotalSeconds:N2} seconds.");
+            _logger.LogInformation("WebSocket connection closed ({closeReason}) after reading {messagesRead} and writing {messagesWritten} messages over {duration} seconds.",
+                closeReason,
+                messagesRead,
+                messagesWritten,
+                (timestamp - establishedTime).TotalSeconds);
         }
     }
 }

@@ -26,7 +26,6 @@ namespace Yarp.Sample
         public float RouteInvokeOffset { get; set; }
         public float ProxyStartOffset { get; set; }
         public float HttpRequestStartOffset { get; set; }
-        public float HttpConnectionEstablishedOffset { get; set; }
         public float HttpRequestLeftQueueOffset { get; set; }
 
         public float HttpRequestHeadersStartOffset { get; set; }

@@ -36,7 +36,7 @@ namespace Yarp.Sample
             // Called after the other middleware steps have completed
             // Write the info to the console via ILogger. In a production scenario you probably want
             // to write the results to your telemetry systems directly.
-            _logger.LogInformation("PerRequestMetrics: "+ metrics.ToJson());
+            _logger.LogInformation("PerRequestMetrics: {metrics}", metrics.ToJson());
         }
     }
 
@@ -45,8 +45,7 @@ namespace Yarp.Sample
     /// </summary>
     public static class YarpMetricCollectionMiddlewareHelper
     {
-        public static IApplicationBuilder UsePerRequestMetricCollection(
-          this IApplicationBuilder builder)
+        public static IApplicationBuilder UsePerRequestMetricCollection(this IApplicationBuilder builder)
         {
             return builder.UseMiddleware<PerRequestYarpMetricCollectionMiddleware>();
         }

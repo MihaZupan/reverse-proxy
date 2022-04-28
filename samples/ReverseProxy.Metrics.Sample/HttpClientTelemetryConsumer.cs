@@ -21,12 +21,6 @@ namespace Yarp.Sample
             metrics.HttpRequestStopOffset = metrics.CalcOffset(timestamp);
         }
 
-        public void OnConnectionEstablished(DateTime timestamp, int versionMajor, int versionMinor)
-        {
-            var metrics = PerRequestMetrics.Current;
-            metrics.HttpConnectionEstablishedOffset = metrics.CalcOffset(timestamp);
-        }
-
         public void OnRequestLeftQueue(DateTime timestamp, TimeSpan timeOnQueue, int versionMajor, int versionMinor)
         {
             var metrics = PerRequestMetrics.Current;
