@@ -9,34 +9,33 @@ using Microsoft.Rest;
 using Serilog;
 using Serilog.Sinks.SystemConsole.Themes;
 
-namespace Yarp.Kubernetes.Controller.App
+namespace Yarp.Kubernetes.Controller.App;
+
+public static class Program
 {
-    public static class Program
+    public static void Main(string[] args)
     {
-        public static void Main(string[] args)
-        {
-            using var serilog = new LoggerConfiguration()
-               .MinimumLevel.Debug()
-               .Enrich.FromLogContext()
-               .WriteTo.Console(theme: AnsiConsoleTheme.Code)
-               .CreateLogger();
+        using var serilog = new LoggerConfiguration()
+           .MinimumLevel.Debug()
+           .Enrich.FromLogContext()
+           .WriteTo.Console(theme: AnsiConsoleTheme.Code)
+           .CreateLogger();
 
-            ServiceClientTracing.IsEnabled = true;
+        ServiceClientTracing.IsEnabled = true;
 
-            Host.CreateDefaultBuilder(args)
-                .ConfigureAppConfiguration(config =>
-                {
-                    config.AddJsonFile("/app/config/yarp.json", optional: true);
-                })
-                .ConfigureLogging(logging =>
-                {
-                    logging.ClearProviders();
-                    logging.AddSerilog(serilog, dispose: false);
-                })
-                .ConfigureWebHostDefaults(webBuilder =>
-                {
-                    webBuilder.UseStartup<Startup>();
-                }).Build().Run();
-        }
+        Host.CreateDefaultBuilder(args)
+            .ConfigureAppConfiguration(config =>
+            {
+                config.AddJsonFile("/app/config/yarp.json", optional: true);
+            })
+            .ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddSerilog(serilog, dispose: false);
+            })
+            .ConfigureWebHostDefaults(webBuilder =>
+            {
+                webBuilder.UseStartup<Startup>();
+            }).Build().Run();
     }
 }

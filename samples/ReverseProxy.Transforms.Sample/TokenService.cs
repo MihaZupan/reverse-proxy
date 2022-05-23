@@ -4,13 +4,12 @@
 using System.Security.Claims;
 using System.Threading.Tasks;
 
-namespace Yarp.Sample
+namespace Yarp.Sample;
+
+internal class TokenService
 {
-    internal class TokenService
+    internal Task<string> GetAuthTokenAsync(ClaimsPrincipal user)
     {
-        internal Task<string> GetAuthTokenAsync(ClaimsPrincipal user)
-        {
-            return Task.FromResult(user.Identity.Name);
-        }
+        return Task.FromResult(user.Identity.Name);
     }
 }

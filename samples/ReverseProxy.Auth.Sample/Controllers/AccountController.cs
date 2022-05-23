@@ -7,58 +7,57 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace Yarp.Sample.Controllers
+namespace Yarp.Sample.Controllers;
+
+[AllowAnonymous]
+[Route("[controller]/[action]")]
+public class AccountController : Controller
 {
-    [AllowAnonymous]
-    [Route("[controller]/[action]")]
-    public class AccountController : Controller
+    [HttpGet]
+    public IActionResult Login(string returnUrl)
     {
-        [HttpGet]
-        public IActionResult Login(string returnUrl)
+        ViewData["returnUrl"] = returnUrl;
+
+        return View();
+    }
+
+    // Processes input from the Login.cshtml page to authenticate the user
+    [HttpPost]
+    public IActionResult Login(string name, string myClaimValue, string returnUrl)
+    {
+        // Create a new identity with 2 claims based on the fields in the form
+        var identity = new ClaimsIdentity(new[]
         {
-            ViewData["returnUrl"] = returnUrl;
+            new Claim(ClaimTypes.Name, name),
+            new Claim("myCustomClaim", myClaimValue)
+        }, CookieAuthenticationDefaults.AuthenticationScheme);
+        var principal = new ClaimsPrincipal(identity);
 
-            return View();
-        }
-
-        // Processes input from the Login.cshtml page to authenticate the user
-        [HttpPost]
-        public IActionResult Login(string name, string myClaimValue, string returnUrl)
+        return SignIn(principal, new AuthenticationProperties()
         {
-            // Create a new identity with 2 claims based on the fields in the form
-            var identity = new ClaimsIdentity(new[]
-            {
-                new Claim(ClaimTypes.Name, name),
-                new Claim("myCustomClaim", myClaimValue)
-            }, CookieAuthenticationDefaults.AuthenticationScheme);
-            var principal = new ClaimsPrincipal(identity);
+            RedirectUri = returnUrl
+            // SignIn is the only one that requires a scheme: https://github.com/dotnet/aspnetcore/issues/23325
+        }, CookieAuthenticationDefaults.AuthenticationScheme);
+    }
 
-            return SignIn(principal, new AuthenticationProperties()
-            {
-                RedirectUri = returnUrl
-                // SignIn is the only one that requires a scheme: https://github.com/dotnet/aspnetcore/issues/23325
-            }, CookieAuthenticationDefaults.AuthenticationScheme);
-        }
-
-        [HttpPost]
-        public IActionResult Logout()
+    [HttpPost]
+    public IActionResult Logout()
+    {
+        return SignOut(new AuthenticationProperties()
         {
-            return SignOut(new AuthenticationProperties()
-            {
-                RedirectUri = "/Account/LoggedOut",
-            });
-        }
+            RedirectUri = "/Account/LoggedOut",
+        });
+    }
 
-        [HttpGet]
-        public IActionResult LoggedOut()
-        {
-            return View();
-        }
+    [HttpGet]
+    public IActionResult LoggedOut()
+    {
+        return View();
+    }
 
-        [HttpGet]
-        public IActionResult AccessDenied()
-        {
-            return View();
-        }
+    [HttpGet]
+    public IActionResult AccessDenied()
+    {
+        return View();
     }
 }
