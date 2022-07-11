@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Crank.EventSources;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Yarp.ReverseProxy.Forwarder;
 
 namespace BenchmarkApp;
 
@@ -27,6 +28,14 @@ public class Startup
         {
             throw new ArgumentException("--clusterUrls is required");
         }
+
+        if (!int.TryParse(_configuration["handlerCount"], out var handlerCount))
+        {
+            handlerCount = 1;
+        }
+
+        Console.WriteLine($"Using {handlerCount} handlers");
+        services.AddSingleton<IForwarderHttpClientFactory>(new MultipleHandlerHttpClientFactory(handlerCount));
 
         var configDictionary = new Dictionary<string, string>
         {
