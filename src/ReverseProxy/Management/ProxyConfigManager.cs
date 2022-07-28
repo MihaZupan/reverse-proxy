@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 using Yarp.ReverseProxy.Configuration;
@@ -64,7 +65,7 @@ internal sealed class ProxyConfigManager : EndpointDataSource, IProxyStateLookup
         IConfigValidator configValidator,
         ProxyEndpointFactory proxyEndpointFactory,
         ITransformBuilder transformBuilder,
-        IForwarderHttpClientFactory httpClientFactory,
+        IEnumerable<IForwarderHttpClientFactory> httpClientFactories,
         IActiveHealthCheckMonitor activeHealthCheckMonitor,
         IClusterDestinationsUpdater clusterDestinationsUpdater)
     {
@@ -76,14 +77,32 @@ internal sealed class ProxyConfigManager : EndpointDataSource, IProxyStateLookup
         _configValidator = configValidator ?? throw new ArgumentNullException(nameof(configValidator));
         _proxyEndpointFactory = proxyEndpointFactory ?? throw new ArgumentNullException(nameof(proxyEndpointFactory));
         _transformBuilder = transformBuilder ?? throw new ArgumentNullException(nameof(transformBuilder));
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
         _activeHealthCheckMonitor = activeHealthCheckMonitor ?? throw new ArgumentNullException(nameof(activeHealthCheckMonitor));
         _clusterDestinationsUpdater = clusterDestinationsUpdater ?? throw new ArgumentNullException(nameof(clusterDestinationsUpdater));
+        ArgumentNullException.ThrowIfNull(httpClientFactories);
 
         if (_providers.Length == 0)
         {
             throw new ArgumentException($"At least one {nameof(IProxyConfigProvider)} is required.", nameof(providers));
         }
+
+        var clientFactories = httpClientFactories.Where(f => f is not null).ToArray();
+        if (clientFactories.Length == 0)
+        {
+            throw new ArgumentException($"At least one {nameof(IForwarderHttpClientFactory)} is required.", nameof(httpClientFactories));
+        }
+
+        var configureHttpClientCount = clientFactories.Count(f => f is CallbackHttpClientFactory);
+        if (configureHttpClientCount > 1)
+        {
+            throw new ArgumentException($"At most one call to '{nameof(ReverseProxyServiceCollectionExtensions.ConfigureHttpClient)}' is supported.", nameof(httpClientFactories));
+        }
+        if (configureHttpClientCount == 1 && clientFactories.Any(f => f is not CallbackHttpClientFactory && f.GetType() != typeof(ForwarderHttpClientFactory)))
+        {
+            throw new ArgumentException($"'{nameof(ReverseProxyServiceCollectionExtensions.ConfigureHttpClient)}' may not be used if a custom {nameof(IForwarderHttpClientFactory)} is specified.", nameof(httpClientFactories));
+        }
+
+        _httpClientFactory = clientFactories[^1];
 
         _configs = new ConfigState[_providers.Length];
 
