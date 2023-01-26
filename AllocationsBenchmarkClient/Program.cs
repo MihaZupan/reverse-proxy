@@ -1,3 +1,5 @@
+using System.Net;
+
 const int Runs = 3;
 const int Iterations = 10_000;
 
@@ -7,7 +9,7 @@ const int Iterations = 10_000;
 // cd C:\MihaZupan\reverse-proxy\AllocationsBenchmarkClient
 // C:\MihaZupan\reverse-proxy\.dotnet\dotnet run
 
-var uri = new Uri("http://localhost:5000");
+var uri = new Uri("https://localhost:5001");
 
 while (true)
 {
@@ -21,8 +23,12 @@ while (true)
         {
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
             UseCookies = false,
-            UseProxy = false
-        });
+            UseProxy = false,
+        })
+        {
+            DefaultRequestVersion = HttpVersion.Version11,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+        };
 
         for (var run = 1; run <= Runs; run++)
         {

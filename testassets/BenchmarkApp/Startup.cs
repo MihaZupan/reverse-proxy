@@ -33,6 +33,7 @@ public class Startup
             { "Routes:route:ClusterId", "cluster" },
             { "Routes:route:Match:Path", "/{**catchall}" },
             { "Clusters:cluster:HttpClient:DangerousAcceptAnyServerCertificate", "true" },
+            { "Clusters:cluster:HttpRequest:Version", "1.1" },
         };
 
         var clusterCount = 0;
