@@ -4,7 +4,7 @@ const int Runs = 3;
 const int Iterations = 10_000;
 
 // cd C:\MihaZupan\reverse-proxy\testassets\TestServer
-// C:\MihaZupan\reverse-proxy\.dotnet\dotnet run --urls "http://localhost:10010;http://localhost:10011"
+// C:\MihaZupan\reverse-proxy\.dotnet\dotnet run  -f net8.0 --urls "http://localhost:10010;http://localhost:10011"
 
 // cd C:\MihaZupan\reverse-proxy\AllocationsBenchmarkClient
 // C:\MihaZupan\reverse-proxy\.dotnet\dotnet run

@@ -1,14 +1,16 @@
 {
   "sdk": {
-    "version": "7.0.200-preview.22531.7"
+    "version": "8.0.100-preview.2.23105.6"
   },
   "tools": {
-    "dotnet": "7.0.200-preview.22531.7",
+    "dotnet": "8.0.100-preview.2.23105.6",
     "runtimes": {
       "dotnet": [
+		"7.0.2",
         "6.0.13"
       ],
       "aspnetcore": [
+		"7.0.2",
         "6.0.13"
       ]
     }
