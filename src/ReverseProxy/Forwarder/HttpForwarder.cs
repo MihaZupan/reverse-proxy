@@ -2,12 +2,13 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -25,10 +26,47 @@ namespace Yarp.ReverseProxy.Forwarder;
 /// </summary>
 internal sealed class HttpForwarder : IHttpForwarder
 {
+    internal sealed class PooledHttpRequestMessage : HttpRequestMessage
+    {
+        private readonly ConcurrentQueue<PooledHttpRequestMessage> _queue;
+
+        public Uri? LastUri { get; set; }
+        public string? LastPath { get; set; }
+        public string? LastQuery { get; set; }
+
+        public PooledHttpRequestMessage(ConcurrentQueue<PooledHttpRequestMessage> queue)
+        {
+            _queue = queue;
+        }
+
+        public void Reset()
+        {
+            Content = null;
+            ((ICollection<KeyValuePair<string, object>>)Options!).Clear();
+
+            var headers = Headers;
+            headers.Clear();
+#if NET7_0_OR_GREATER
+            headers.Protocol = null;
+#endif
+
+            RequestUri = null;
+        }
+
+        public void Return()
+        {
+            Reset();
+            _queue.Enqueue(this);
+        }
+    }
+
     private static readonly string WebSocketName = "websocket";
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(100);
     private static readonly Version DefaultVersion = HttpVersion.Version20;
     private static readonly HttpVersionPolicy DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+
+    private static readonly ConditionalWeakTable<string, ConcurrentQueue<PooledHttpRequestMessage>> _sharedRequests = new();
+
     private readonly ILogger _logger;
     private readonly IClock _clock;
 
@@ -91,6 +129,7 @@ internal sealed class HttpForwarder : IHttpForwarder
         HttpTransformer transformer)
         => SendAsync(context, destinationPrefix, httpClient, requestConfig, transformer, CancellationToken.None);
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<ForwarderError> SendAsync(
         HttpContext context,
         string destinationPrefix,
@@ -123,6 +162,13 @@ internal sealed class HttpForwarder : IHttpForwarder
             throw new ArgumentException("Invalid destination prefix.", nameof(destinationPrefix));
         }
 
+        var requestQueue = _sharedRequests.GetOrCreateValue(destinationPrefix);
+
+        if (!requestQueue.TryDequeue(out var destinationRequest))
+        {
+            destinationRequest = new(requestQueue);
+        }
+
         ForwarderTelemetry.Log.ForwarderStart(destinationPrefix);
 
         var activityCancellationSource = ActivityCancellationTokenSource.Rent(requestConfig?.ActivityTimeout ?? DefaultTimeout, context.RequestAborted, cancellationToken);
@@ -134,15 +180,17 @@ internal sealed class HttpForwarder : IHttpForwarder
             // See https://github.com/microsoft/reverse-proxy/issues/118 for design discussion.
             var isStreamingRequest = isClientHttp2OrGreater && ProtocolHelper.IsGrpcContentType(context.Request.ContentType);
 
-            HttpRequestMessage? destinationRequest = null;
+            var creatingRequest = true;
             StreamCopyHttpContent? requestContent = null;
             HttpResponseMessage destinationResponse;
             try
             {
                 // :: Step 1-3: Create outgoing HttpRequestMessage
                 bool tryDowngradingH2WsOnFailure;
-                (destinationRequest, requestContent, tryDowngradingH2WsOnFailure) = await CreateRequestMessageAsync(
-                    context, destinationPrefix, transformer, requestConfig, isStreamingRequest, activityCancellationSource);
+                (requestContent, tryDowngradingH2WsOnFailure) = await CreateRequestMessageAsync(
+                    destinationRequest, context, destinationPrefix, transformer, requestConfig, isStreamingRequest, activityCancellationSource);
+
+                creatingRequest = false;
 
                 // Transforms generated a response, do not proxy.
                 if (RequestUtilities.IsResponseSet(context.Response))
@@ -191,8 +239,15 @@ internal sealed class HttpForwarder : IHttpForwarder
                         Version = HttpVersion.Version11,
                         VersionPolicy = HttpVersionPolicy.RequestVersionExact
                     };
-                    (destinationRequest, requestContent, _) = await CreateRequestMessageAsync(
+
+                    destinationRequest.Reset();
+
+                    creatingRequest = true;
+
+                    (requestContent, _) = await CreateRequestMessageAsync(destinationRequest,
                         context, destinationPrefix, transformer, config, isStreamingRequest, activityCancellationSource);
+
+                    creatingRequest = false;
 
                     destinationResponse = await httpClient.SendAsync(destinationRequest, activityCancellationSource.Token);
                 }
@@ -200,7 +255,7 @@ internal sealed class HttpForwarder : IHttpForwarder
             catch (Exception requestException)
             {
                 return await HandleRequestFailureAsync(context, requestContent, requestException, transformer, activityCancellationSource,
-                    failedDuringRequestCreation: destinationRequest is null);
+                    failedDuringRequestCreation: creatingRequest);
             }
 
             ForwarderTelemetry.Log.ForwarderStage(ForwarderStage.SendAsyncStop);
@@ -321,17 +376,16 @@ internal sealed class HttpForwarder : IHttpForwarder
         finally
         {
             activityCancellationSource.Return();
+            destinationRequest.Return();
             ForwarderTelemetry.Log.ForwarderStop(context.Response.StatusCode);
         }
 
         return ForwarderError.None;
     }
 
-    private async ValueTask<(HttpRequestMessage, StreamCopyHttpContent?, bool)> CreateRequestMessageAsync(HttpContext context, string destinationPrefix,
+    private async ValueTask<(StreamCopyHttpContent?, bool)> CreateRequestMessageAsync(PooledHttpRequestMessage destinationRequest, HttpContext context, string destinationPrefix,
         HttpTransformer transformer, ForwarderRequestConfig? requestConfig, bool isStreamingRequest, ActivityCancellationTokenSource activityToken)
     {
-        var destinationRequest = new HttpRequestMessage();
-
         var upgradeFeature = context.Features.Get<IHttpUpgradeFeature>();
         var upgradeHeader = context.Request.Headers[HeaderNames.Upgrade].ToString();
 
@@ -420,7 +474,7 @@ internal sealed class HttpForwarder : IHttpForwarder
         // The transformer generated a response, do not forward.
         if (RequestUtilities.IsResponseSet(context.Response))
         {
-            return (destinationRequest, requestContent, false);
+            return (requestContent, false);
         }
 
         // Transforms may have taken a while, especially if they buffered the body, they count as forward progress.
@@ -430,7 +484,7 @@ internal sealed class HttpForwarder : IHttpForwarder
 
         // Allow someone to custom build the request uri, otherwise provide a default for them.
         var request = context.Request;
-        destinationRequest.RequestUri ??= RequestUtilities.MakeDestinationAddress(destinationPrefix, request.Path, request.QueryString);
+        destinationRequest.RequestUri ??= RequestUtilities.MakeDestinationAddress(destinationRequest, destinationPrefix, request.Path, request.QueryString);
 
         if (requestConfig?.AllowResponseBuffering != true)
         {
@@ -438,7 +492,7 @@ internal sealed class HttpForwarder : IHttpForwarder
         }
 
         // TODO: What if they replace the HttpContent object? That would mess with our tracking and error handling.
-        return (destinationRequest, requestContent, tryDowngradingH2WsOnFailure);
+        return (requestContent, tryDowngradingH2WsOnFailure);
     }
 
     // Connection and Upgrade headers were not copied with the rest of the headers.
@@ -857,7 +911,7 @@ internal sealed class HttpForwarder : IHttpForwarder
         // https://github.com/dotnet/runtime/blame/8fc68f626a11d646109a758cb0fc70a0aa7826f1/src/libraries/System.Net.Http/src/System/Net/Http/HttpResponseMessage.cs#L46
         if (destinationResponseContent is not null)
         {
-            using var destinationResponseStream = await destinationResponseContent.ReadAsStreamAsync(activityCancellationSource.Token);
+            using var destinationResponseStream = destinationResponseContent.ReadAsStream(activityCancellationSource.Token);
             // The response content-length is enforced by the server.
             return await StreamCopier.CopyAsync(isRequest: false, destinationResponseStream, clientResponseStream, StreamCopier.UnknownLength, _clock, activityCancellationSource, activityCancellationSource.Token);
         }

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -118,10 +119,13 @@ internal sealed class StructuredTransformer : HttpTransformer
         // Allow a transform to directly set a custom RequestUri.
         if (proxyRequest.RequestUri is null)
         {
-            var queryString = transformContext.MaybeQuery?.QueryString ?? httpContext.Request.QueryString;
+            var prefix = transformContext.DestinationPrefix;
+            var path = transformContext.Path;
+            var query = transformContext.MaybeQuery?.QueryString ?? httpContext.Request.QueryString;
 
-            proxyRequest.RequestUri = RequestUtilities.MakeDestinationAddress(
-                transformContext.DestinationPrefix, transformContext.Path, queryString);
+            proxyRequest.RequestUri = proxyRequest is HttpForwarder.PooledHttpRequestMessage pooledRequest
+                ? RequestUtilities.MakeDestinationAddress(pooledRequest, prefix, path, query)
+                : RequestUtilities.MakeDestinationAddress(prefix, path, query);
         }
     }
 

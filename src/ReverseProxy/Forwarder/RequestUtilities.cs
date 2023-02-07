@@ -121,6 +121,21 @@ public static class RequestUtilities
         return new Uri(targetAddress, UriKind.Absolute);
     }
 
+    internal static Uri MakeDestinationAddress(HttpForwarder.PooledHttpRequestMessage request, string destinationPrefix, PathString path, QueryString query)
+    {
+        if (request.LastPath == path.Value && request.LastQuery == query.Value)
+        {
+            return request.LastUri!;
+        }
+
+        var uri = MakeDestinationAddress(destinationPrefix, path, query);
+
+        request.LastPath = path.Value;
+        request.LastQuery = query.Value;
+        request.LastUri = uri;
+        return uri;
+    }
+
     // This isn't using PathString.ToUriComponent() because it doesn't round trip some escape sequences the way we want.
     private static string EncodePath(PathString path)
     {
