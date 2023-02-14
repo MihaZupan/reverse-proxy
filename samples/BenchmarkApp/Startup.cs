@@ -20,24 +20,17 @@ namespace BenchmarkApp
 
         public void ConfigureServices(IServiceCollection services)
         {
-            var urls = _configuration["urls"];
-            var backendUrls = _configuration["backendUrls"];
-
-            if (string.IsNullOrWhiteSpace(urls))
-            {
-                throw new ArgumentException("--urls is required");
-            }
+            var backendUrls = _configuration["clusterUrls"];
 
             if (string.IsNullOrWhiteSpace(backendUrls))
             {
-                throw new ArgumentException("--backendUrls is required");
+                throw new ArgumentException("--clusterUrls is required");
             }
 
             var configDictionary = new Dictionary<string, string>
             {
                 { "Routes:0:RouteId", "route" },
                 { "Routes:0:BackendId", "backend" },
-                { "Routes:0:Match:Host", new Uri(urls.Split(';', 1)[0]).Host },
             };
 
             var backendCount = 0;
