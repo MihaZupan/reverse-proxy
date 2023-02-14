@@ -3,20 +3,20 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
-namespace Yarp.ReverseProxy.Routing
+namespace Yarp.ReverseProxy.Routing;
+
+/// <summary>
+/// Represents request header metadata used during routing.
+/// </summary>
+internal sealed class HeaderMetadata : IHeaderMetadata
 {
-    /// <summary>
-    /// Represents request header metadata used during routing.
-    /// </summary>
-    internal sealed class HeaderMetadata : IHeaderMetadata
+    public HeaderMetadata(IReadOnlyList<HeaderMatcher> matchers)
     {
-        public HeaderMetadata(IReadOnlyList<HeaderMatcher> matchers)
-        {
-            Matchers = matchers ?? throw new ArgumentNullException(nameof(matchers));
-        }
-
-        /// <inheritdoc/>
-        public IReadOnlyList<HeaderMatcher> Matchers { get; }
+        Matchers = matchers?.ToArray() ?? throw new ArgumentNullException(nameof(matchers));
     }
+
+    /// <inheritdoc/>
+    public HeaderMatcher[] Matchers { get; }
 }

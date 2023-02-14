@@ -1,33 +1,46 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-namespace Yarp.ReverseProxy.Configuration
+namespace Yarp.ReverseProxy.Configuration;
+
+/// <summary>
+/// How to match header values.
+/// </summary>
+public enum HeaderMatchMode
 {
     /// <summary>
-    /// How to match header values.
+    /// Any of the headers with the given name must match in its entirety, subject to case sensitivity settings.
+    /// If a header contains multiple values (separated by , or ;), they are split before matching.
+    /// A single pair of quotes will also be stripped from the value before matching.
     /// </summary>
-    public enum HeaderMatchMode
-    {
-        /// <summary>
-        /// The header must match in its entirety, subject to case sensitivity settings.
-        /// Only single headers are supported. If there are multiple headers with the same name then the match fails.
-        /// </summary>
-        ExactHeader,
+    ExactHeader,
 
-        // TODO: Matches individual values from multi-value headers (split by coma, or semicolon for cookies).
-        // Also supports multiple headers of the same name.
-        // ExactValue,
-        // ValuePrefix,
+    /// <summary>
+    /// Any of the headers with the given name must match by prefix, subject to case sensitivity settings.
+    /// If a header contains multiple values (separated by , or ;), they are split before matching.
+    /// A single pair of quotes will also be stripped from the value before matching.
+    /// </summary>
+    HeaderPrefix,
 
-        /// <summary>
-        /// The header must match by prefix, subject to case sensitivity settings.
-        /// Only single headers are supported. If there are multiple headers with the same name then the match fails.
-        /// </summary>
-        HeaderPrefix,
+    /// <summary>
+    /// Any of the headers with the given name must contain any of the match values, subject to case sensitivity settings.
+    /// </summary>
+    Contains,
 
-        /// <summary>
-        /// The header must exist and contain any non-empty value.
-        /// </summary>
-        Exists,
-    }
+    /// <summary>
+    /// The header must exist and the value must be non-empty.
+    /// None of the headers with the given name may contain any of the match values, subject to case sensitivity settings.
+    /// </summary>
+    NotContains,
+
+    /// <summary>
+    /// The header must exist and contain any non-empty value.
+    /// If there are multiple headers with the same name, the rule will also match.
+    /// </summary>
+    Exists,
+
+    /// <summary>
+    /// The header must not exist.
+    /// </summary>
+    NotExists,
 }

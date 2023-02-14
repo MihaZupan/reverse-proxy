@@ -16,10 +16,9 @@ XliffTasks* |  MIT
 docfx.console |  MIT
 NETStandard.Library |  MIT
 
-## Yarp.ReverseProxy.Kubernetes.Ingress
+## Yarp.Kubernetes.Ingress
 | Package | License |
 | :--- | :--- |
-Nerdbank.GitVersioning |  MIT
 Serilog.Extensions.Logging |  Apache-2.0
 Serilog.Formatting.Compact |  Apache-2.0
 Serilog.Sinks.Console |  Apache-2.0
@@ -71,19 +70,13 @@ KubernetesClient |  Apache-2.0
 Microsoft.AspNetCore.Mvc.NewtonsoftJson |  Apache-2.0
 Microsoft.CodeAnalysis.FxCopAnalyzers |  [Microsoft .NET Library](https://dotnet.microsoft.com/en/dotnet_library_license.htm)
 
-## Yarp.ReverseProxy.Kubernetes.Controller
+## Yarp.Kubernetes.Controller
 | Package | License |
 | :--- | :--- |
 Microsoft.VisualStudio.Azure.Containers.Tools.Targets |  [Microsoft .Net Library](https://www.microsoft.com/web/webpi/eula/net_library_eula_ENU.htm)
-Nerdbank.GitVersioning |  MIT
 Serilog.Extensions.Logging |  Apache-2.0
 Serilog.Formatting.Compact |  Apache-2.0
 Serilog.Sinks.Console |  Apache-2.0
-
-## Yarp.ReverseProxy.ServiceFabric
-| Package | License |
-| :--- | :--- |
-Microsoft.ServiceFabric.Services |  [Microsoft .Net Library](https://www.microsoft.com/web/webpi/eula/net_library_eula_ENU.htm)
 
 ## Yarp.ReverseProxy.FunctionalTests
 | Package | License |
@@ -93,26 +86,13 @@ xunit |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/maste
 xunit.runner.console |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/master/license.txt)
 xunit.runner.visualstudio |  MIT 
 
-## Yarp.ReverseProxy.Kubernetes.Tests
+## Yarp.Kubernetes.Tests
 | Package | License |
 | :--- | :--- |
 Autofac | MIT
 Autofac.Extras.Moq |  MIT
 coverlet.collector |  MIT
 Microsoft.NET.Test.Sdk |  [Microsoft .Net Library](https://www.microsoft.com/web/webpi/eula/net_library_eula_enu.htm)
-xunit |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/master/license.txt)
-xunit.runner.console |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/master/license.txt)
-xunit.runner.visualstudio |  MIT 
-
-## Yarp.ReverseProxy.ServiceFabric.Tests
-| Package | License |
-| :--- | :--- |
-Autofac | MIT
-Autofac.Extras.Moq |  MIT
-coverlet.collector |  MIT
-FluentAssertions |  Apache-2.0
-Microsoft.NET.Test.Sdk |  [Microsoft .Net Library](https://www.microsoft.com/web/webpi/eula/net_library_eula_enu.htm)
-Moq |  [BSD 3-Clause License](https://raw.githubusercontent.com/moq/moq4/master/License.txt)
 xunit |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/master/license.txt)
 xunit.runner.console |  [Multiple licenses](https://raw.githubusercontent.com/xunit/xunit/master/license.txt)
 xunit.runner.visualstudio |  MIT 

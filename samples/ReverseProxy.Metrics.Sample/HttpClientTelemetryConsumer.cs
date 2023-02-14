@@ -3,7 +3,7 @@
 
 using System;
 using System.Net.Http;
-using Yarp.ReverseProxy.Telemetry.Consumption;
+using Yarp.Telemetry.Consumption;
 
 namespace Yarp.Sample
 {
@@ -18,11 +18,7 @@ namespace Yarp.Sample
         public void OnRequestStop(DateTime timestamp)
         {
             var metrics = PerRequestMetrics.Current;
-            metrics.HttpRequestContentStopOffset = metrics.CalcOffset(timestamp);
-        }
-
-        public void OnRequestFailed(DateTime timestamp)
-        {      
+            metrics.HttpRequestStopOffset = metrics.CalcOffset(timestamp);
         }
 
         public void OnConnectionEstablished(DateTime timestamp, int versionMajor, int versionMinor)

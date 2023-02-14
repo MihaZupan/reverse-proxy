@@ -3,7 +3,7 @@
 
 using System;
 using Yarp.ReverseProxy.Forwarder;
-using Yarp.ReverseProxy.Telemetry.Consumption;
+using Yarp.Telemetry.Consumption;
 
 namespace Yarp.Sample
 {
@@ -24,7 +24,6 @@ namespace Yarp.Sample
         public void OnForwarderFailed(DateTime timestamp, ForwarderError error)
         {
             var metrics = PerRequestMetrics.Current;
-            metrics.ProxyStopOffset = metrics.CalcOffset(timestamp);
             metrics.Error = error;
         }
 

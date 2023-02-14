@@ -139,7 +139,7 @@ public class FirstUnsuccessfulResponseHealthPolicy : IActiveHealthCheckPolicy
         for (var i = 0; i < probingResults.Count; i++)
         {
             var response = probingResults[i].Response;
-            var newHealth = response != null && response.IsSuccessStatusCode ? DestinationHealth.Healthy : DestinationHealth.Unhealthy;
+            var newHealth = response is not null && response.IsSuccessStatusCode ? DestinationHealth.Healthy : DestinationHealth.Unhealthy;
             newHealthStates[i] = new NewActiveDestinationHealth(probingResults[i].Destination, newHealth);
         }
 
@@ -150,6 +150,12 @@ public class FirstUnsuccessfulResponseHealthPolicy : IActiveHealthCheckPolicy
 
 #### IProbingRequestFactory
 [IProbingRequestFactory](xref:Yarp.ReverseProxy.Health.IProbingRequestFactory) creates active health probing requests to be sent to destination health endpoints. It can take into account `ActiveHealthCheckOptions.Path`, `DestinationConfig.Health`, and other configuration settings to construct probing requests.
+
+The default `IProbingRequestFactory` uses the same `HttpRequest` configuration as proxy requests, to customize that implement your own `IProbingRequestFactory` and register it in DI like the below.
+
+```C#
+services.AddSingleton<IProbingRequestFactory, CustomProbingRequestFactory>();
+```
 
 The below is a simple example of a customer `IProbingRequestFactory` concatenating `DestinationConfig.Address` and a fixed health probe path to create the probing request URI.
 
@@ -167,7 +173,7 @@ public class CustomProbingRequestFactory : IProbingRequestFactory
 ## Passive health checks
 YARP can passively watch for successes and failures in client request proxying to reactively evaluate destination health states. Responses to the proxied requests are intercepted by a dedicated passive health check middleware which passes them to a policy configured on the cluster. The policy analyzes the responses to evaluate if the destinations that produced them are healthy or not. Then, it calculates and assigns new passive health states to the respective destinations and rebuilds the cluster's healthy destination collection.
 
-Note the response is normally send to the client before the passive health policy runs, so a policy cannot intercept the response body, nor modify anything in the response headers unless the proxy application introduces full response buffering.
+Note the response is normally sent to the client before the passive health policy runs, so a policy cannot intercept the response body, nor modify anything in the response headers unless the proxy application introduces full response buffering.
 
 There is one important difference from the active health check logic. Once a destination gets assigned an unhealthy passive state, it stops receiving all new traffic which blocks future health reevaluation. The policy also schedules a destination reactivation after the configured period. Reactivation means resetting the passive health state from `Unhealthy` back to the initial `Unknown` value which makes destination eligible for traffic again.
 
@@ -227,7 +233,7 @@ var clusters = new[]
 ### Configuration
 Passive health check settings are specified on the cluster level in `Cluster/HealthCheck/Passive` section. Alternatively, they can be defined in code via the corresponding types in [Yarp.ReverseProxy.Configuration](xref:Yarp.ReverseProxy.Configuration) namespace mirroring the configuration contract.
 
-Passive health checks require the `PassiveHealthCheckMiddleware` added into the pipeline for them to work. The default `MapReverseProxy(this IEndpointRouteBuilder endpoints)` method does it automatically, but in case of a manual pipeline construction the [UsePassiveHealthChecks](xref:Microsoft.AspNetCore.Builder.ProxyMiddlewareAppBuilderExtensions) method must be called to add that middleware as shown in the example below.
+Passive health checks require the `PassiveHealthCheckMiddleware` added into the pipeline for them to work. The default `MapReverseProxy(this IEndpointRouteBuilder endpoints)` method does it automatically, but in case of a manual pipeline construction the [UsePassiveHealthChecks](xref:Microsoft.AspNetCore.Builder.AppBuilderHealthExtensions) method must be called to add that middleware as shown in the example below.
 
 ```C#
 endpoints.MapReverseProxy(proxyPipeline =>
@@ -246,7 +252,7 @@ endpoints.MapReverseProxy(proxyPipeline =>
 - `ReactivationPeriod` - period after which an unhealthy destination's passive health state is reset to `Unknown` and it starts receiving traffic again. Default value is `null` which means the period will be set by a `IPassiveHealthCheckPolicy`
 
 ### Built-in policies
-There is currently one built-in passive health check policy - `TransportFailureRateHealthPolicy`. It calculates the proxied requests failure rate for each destination and marks it as unhealthy if the specified limit is exceeded. Rate is calculated as a percentage of failured requests to the total number of request proxied to a destination in the given period of time. Failed and total counters are tracked in a sliding time window which means that only the recent readings fitting in the window are taken into account.
+There is currently one built-in passive health check policy - [`TransportFailureRateHealthPolicy`](xref:Yarp.ReverseProxy.Health.TransportFailureRateHealthPolicyOptions). It calculates the proxied requests failure rate for each destination and marks it as unhealthy if the specified limit is exceeded. Rate is calculated as a percentage of failured requests to the total number of request proxied to a destination in the given period of time. Failed and total counters are tracked in a sliding time window which means that only the recent readings fitting in the window are taken into account.
 There are two sets of policy parameters defined globally and on per cluster level.
 
 Global parameters are set via the options mechanism using `TransportFailureRateHealthPolicyOptions` type with the following properties:
@@ -266,14 +272,13 @@ services.Configure<TransportFailureRateHealthPolicyOptions>(o =>
 ```
 
 Cluster-specific parameters are set in the cluster's metadata as follows:
-
 `TransportFailureRateHealthPolicy.RateLimit` - failure rate limit for a destination to be marked as unhealhty. The value is in range `(0,1)`. Default value is provided by the global `DefaultFailureRateLimit` parameter.
 
 ### Design
 The main component is [PassiveHealthCheckMiddleware](xref:Yarp.ReverseProxy.Health.PassiveHealthCheckMiddleware) sitting in the request pipeline and analyzing responses returned by destinations. For each response from a destination belonging to a cluster with enabled passive health checks, `PassiveHealthCheckMiddleware` invokes an [IPassiveHealthCheckPolicy](xref:Yarp.ReverseProxy.Health.IPassiveHealthCheckPolicy) specified for the cluster. The policy analyzes the given response, evaluates a new destination's passive health state and calls [IDestinationHealthUpdater](xref:Yarp.ReverseProxy.Health.IDestinationHealthUpdater) to actually update [DestinationHealthState.Passive](xref:Yarp.ReverseProxy.Model.DestinationHealthState.Passive) value. The update happens asynchronously in the background and doesn't block the request pipeline. When a destination gets marked as unhealthy, it stops receiving new requests until it gets reactivated after a configured period. Reactivation means the destination's `DestinationHealthState.Passive` state is reset from `Unhealthy` to `Unknown` and the cluster's list of healthy destinations is rebuilt to include it. A reactivation is scheduled by `IDestinationHealthUpdater` right after setting the destination's `DestinationHealthState.Passive` to `Unhealthy`.
 
 ```
-      (Respose to a proxied request)
+      (Response to a proxied request)
                   |
       PassiveHealthCheckMiddleware
                   |
@@ -309,13 +314,13 @@ public class FirstUnsuccessfulResponseHealthPolicy : IPassiveHealthCheckPolicy
 
     public string Name => "FirstUnsuccessfulResponse";
 
-    public void RequestProxied(ClusterState cluster, DestinationState destination, HttpContext context)
+    public void RequestProxied(HttpContext context, ClusterState cluster, DestinationState destination)
     {
-        var error = context.Features.Get<IProxyErrorFeature>();
-        if (error != null)
+        var error = context.Features.Get<IForwarderErrorFeature>();
+        if (error is not null)
         {
-            var reactivationPeriod = cluster.Model.Config.HealthCheck.Passive.ReactivationPeriod ?? _defaultReactivationPeriod;
-            _ = _healthUpdater.SetPassiveAsync(cluster, destination, DestinationHealth.Unhealthy, reactivationPeriod);
+            var reactivationPeriod = cluster.Model.Config.HealthCheck?.Passive?.ReactivationPeriod ?? _defaultReactivationPeriod;
+            _healthUpdater.SetPassive(cluster, destination, DestinationHealth.Unhealthy, reactivationPeriod);
         }
     }
 }

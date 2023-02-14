@@ -3,158 +3,251 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Yarp.ReverseProxy.Utilities;
 
-namespace Yarp.ReverseProxy.Health
+namespace Yarp.ReverseProxy.Health;
+
+/// <summary>
+/// Periodically invokes specified actions on registered entities.
+/// </summary>
+/// <remarks>
+/// It creates a separate <see cref="Timer"/> for each registration which is considered
+/// reasonably efficient because .NET already maintains a process-wide managed timer queue.
+/// There are 2 scheduling modes supported: run once and infinite run. In "run once" mode,
+/// an entity gets unscheduled after the respective timer fired for the first time whereas
+/// in "infinite run" entities get repeatedly rescheduled until either they are explicitly removed
+/// or the <see cref="EntityActionScheduler{T}"/> instance is disposed.
+/// </remarks>
+internal sealed class EntityActionScheduler<T> : IDisposable where T : notnull
 {
-    /// <summary>
-    /// Periodically invokes specified actions on registered entities.
-    /// </summary>
-    /// <remarks>
-    /// It creates a separate <see cref="Timer"/> for each registration which is considered
-    /// reasonably efficient because .NET already maintains a process-wide managed timer queue.
-    /// There are 2 scheduling modes supported: run once and infinite run. In "run once" mode,
-    /// an entity gets unscheduled after the respective timer fired for the first time whereas
-    /// in "infinite run" entities get repeatedly rescheduled until either they are explicitly removed
-    /// or the <see cref="EntityActionScheduler{T}"/> instance is disposed.
-    /// </remarks>
-    internal sealed class EntityActionScheduler<T> : IDisposable where T : notnull
+    private readonly ConcurrentDictionary<T, SchedulerEntry> _entries = new();
+    private readonly WeakReference<EntityActionScheduler<T>> _weakThisRef;
+    private readonly Func<T, Task> _action;
+    private readonly bool _runOnce;
+    private readonly ITimerFactory _timerFactory;
+
+    private const int NotStarted = 0;
+    private const int Started = 1;
+    private const int Disposed = 2;
+    private int _status;
+
+    public EntityActionScheduler(Func<T, Task> action, bool autoStart, bool runOnce, ITimerFactory timerFactory)
     {
-        private readonly ConcurrentDictionary<T, SchedulerEntry> _entries = new();
-        private readonly Func<T, Task> _action;
-        private readonly bool _runOnce;
-        private readonly ITimerFactory _timerFactory;
-        private readonly TimerCallback _timerCallback;
-        private int _isStarted;
+        _action = action ?? throw new ArgumentNullException(nameof(action));
+        _runOnce = runOnce;
+        _timerFactory = timerFactory ?? throw new ArgumentNullException(nameof(timerFactory));
+        _status = autoStart ? Started : NotStarted;
+        _weakThisRef = new WeakReference<EntityActionScheduler<T>>(this);
+    }
 
-        public EntityActionScheduler(Func<T, Task> action, bool autoStart, bool runOnce, ITimerFactory timerFactory)
+    public void Dispose()
+    {
+        Volatile.Write(ref _status, Disposed);
+
+        foreach (var entry in _entries.Values)
         {
-            _action = action ?? throw new ArgumentNullException(nameof(action));
-            _runOnce = runOnce;
-            _timerFactory = timerFactory ?? throw new ArgumentNullException(nameof(timerFactory));
-            _timerCallback = async o => await Run(o!);
-            _isStarted = autoStart ? 1 : 0;
+            entry.Dispose();
+        }
+    }
+
+    public void Start()
+    {
+        if (Interlocked.CompareExchange(ref _status, Started, NotStarted) != NotStarted)
+        {
+            return;
         }
 
-        public void Dispose()
+        foreach (var entry in _entries.Values)
         {
-            foreach(var entry in _entries.Values)
-            {
-                entry.Timer.Dispose();
-            }
+            entry.EnsureStarted();
         }
+    }
 
-        public void Start()
+    public void ScheduleEntity(T entity, TimeSpan period)
+    {
+        // Ensure the Timer has a weak reference to this scheduler; otherwise,
+        // EntityActionScheduler can be rooted by the Timer implementation.
+        var entry = new SchedulerEntry(_weakThisRef, entity, (long)period.TotalMilliseconds, _timerFactory);
+
+        if (_entries.TryAdd(entity, entry))
         {
-            if (Interlocked.Exchange(ref _isStarted, 1) == 1)
-            {
-                return;
-            }
-
-            foreach (var entry in _entries.Values)
-            {
-                entry.SetTimer();
-            }
-        }
-
-        public void ScheduleEntity(T entity, TimeSpan period)
-        {
-            var entry = new SchedulerEntry(entity, (long)period.TotalMilliseconds, _timerCallback, _timerFactory);
-            var added = _entries.TryAdd(entity, entry);
-
             // Scheduler could have been started while we were adding the new entry.
             // Start timer here to ensure it's not forgotten.
-            if (Volatile.Read(ref _isStarted) == 1)
+            if (Volatile.Read(ref _status) == Started)
             {
-                entry.SetTimer();
-            }
-
-            Debug.Assert(added);
-        }
-
-        public void ChangePeriod(T entity, TimeSpan newPeriod)
-        {
-            if (_entries.TryGetValue(entity, out var entry))
-            {
-                entry.ChangePeriod((long)newPeriod.TotalMilliseconds, Volatile.Read(ref _isStarted) == 1);
-            }
-            else
-            {
-                ScheduleEntity(entity, newPeriod);
+                entry.EnsureStarted();
             }
         }
-
-        public void UnscheduleEntity(T entity)
+        else
         {
-            if (_entries.TryRemove(entity, out var entry))
+            entry.Dispose();
+        }
+    }
+
+    public void ChangePeriod(T entity, TimeSpan newPeriod)
+    {
+        Debug.Assert(!_runOnce, "Calling ChangePeriod on a RunOnce scheduler may cause the callback to fire twice");
+
+        if (_entries.TryGetValue(entity, out var entry))
+        {
+            entry.ChangePeriod((long)newPeriod.TotalMilliseconds);
+        }
+        else
+        {
+            ScheduleEntity(entity, newPeriod);
+        }
+    }
+
+    public void UnscheduleEntity(T entity)
+    {
+        if (_entries.TryRemove(entity, out var entry))
+        {
+            entry.Dispose();
+        }
+    }
+
+    public bool IsScheduled(T entity)
+    {
+        return _entries.ContainsKey(entity);
+    }
+
+    private sealed class SchedulerEntry : IDisposable
+    {
+        private readonly WeakReference<EntityActionScheduler<T>> _scheduler;
+        private readonly T _entity;
+        private readonly ITimer _timer;
+        private long _period;
+        private bool _timerStarted;
+        private bool _runningCallback;
+
+        public SchedulerEntry(WeakReference<EntityActionScheduler<T>> scheduler, T entity, long period, ITimerFactory timerFactory)
+        {
+            _scheduler = scheduler;
+            _entity = entity;
+            _period = period;
+
+            // Don't capture the current ExecutionContext and its AsyncLocals onto the timer causing them to live forever
+            var restoreFlow = false;
+            try
             {
-                entry.Timer.Dispose();
+                if (!ExecutionContext.IsFlowSuppressed())
+                {
+                    ExecutionContext.SuppressFlow();
+                    restoreFlow = true;
+                }
+
+                _timer = timerFactory.CreateTimer(static s => _ = TimerCallback(s), this, Timeout.Infinite, Timeout.Infinite);
+            }
+            finally
+            {
+                if (restoreFlow)
+                {
+                    ExecutionContext.RestoreFlow();
+                }
             }
         }
 
-        public bool IsScheduled(T entity)
+        public void ChangePeriod(long newPeriod)
         {
-            return _entries.ContainsKey(entity);
-        }
-
-        private async Task Run(object entryObj)
-        {
-            var entry = (SchedulerEntry)entryObj;
-
-            if (_runOnce)
+            lock (this)
             {
-                UnscheduleEntity(entry.Entity);
-            }
-
-            await _action(entry.Entity);
-
-            // Check if the entity is still scheduled.
-            if (_entries.ContainsKey(entry.Entity))
-            {
-                entry.SetTimer();
-            }
-        }
-
-        private class SchedulerEntry
-        {
-            private long _period;
-
-            public SchedulerEntry(T entity, long period, TimerCallback timerCallback, ITimerFactory timerFactory)
-            {
-                Entity = entity;
-                _period = period;
-                Timer = timerFactory.CreateTimer(timerCallback, this, Timeout.Infinite, Timeout.Infinite);
-            }
-
-            public T Entity { get; }
-
-            public long Period => _period;
-
-            public ITimer Timer { get; }
-
-            public void ChangePeriod(long newPeriod, bool resetTimer)
-            {
-                Interlocked.Exchange(ref _period, newPeriod);
-                if (resetTimer)
+                _period = newPeriod;
+                if (_timerStarted && !_runningCallback)
                 {
                     SetTimer();
                 }
             }
+        }
 
-            public void SetTimer()
+        public void EnsureStarted()
+        {
+            lock (this)
             {
-                try
+                if (!_timerStarted)
                 {
-                    Timer.Change(Interlocked.Read(ref _period), Timeout.Infinite);
+                    SetTimer();
                 }
-                catch (ObjectDisposedException)
+            }
+        }
+
+        private void SetTimer()
+        {
+            Debug.Assert(Monitor.IsEntered(this));
+            Debug.Assert(!_runningCallback);
+
+            _timerStarted = true;
+
+            try
+            {
+                _timer.Change(_period, Timeout.Infinite);
+            }
+            catch (ObjectDisposedException)
+            {
+                // It can be thrown if the timer has been already disposed.
+                // Just suppress it.
+            }
+        }
+
+        public void Dispose()
+        {
+            _timer.Dispose();
+        }
+
+        // Timer.Change is racy as the callback could already be scheduled while we are starting the timer again.
+        // Avoid running the callback multiple times concurrently by using the _runningCallback flag.
+        private static async Task TimerCallback(object? state)
+        {
+            var entry = (SchedulerEntry)state!;
+
+            lock (entry)
+            {
+                if (entry._runningCallback)
                 {
-                    // It can be thrown if the timer has been already disposed.
-                    // Just suppress it.
+                    return;
                 }
+
+                entry._runningCallback = true;
+            }
+
+            if (!entry._scheduler.TryGetTarget(out var scheduler))
+            {
+                return;
+            }
+
+            var pair = new KeyValuePair<T, SchedulerEntry>(entry._entity, entry);
+
+            if (scheduler._runOnce && scheduler._entries.TryRemove(pair))
+            {
+                entry.Dispose();
+            }
+
+            try
+            {
+                await scheduler._action(entry._entity);
+
+                if (!scheduler._runOnce && scheduler._entries.Contains(pair))
+                {
+                    // This entry has not been unscheduled - set the timer again
+                    lock (entry)
+                    {
+                        entry._runningCallback = false;
+                        entry.SetTimer();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // We are running on the ThreadPool, don't propagate excetions
+                Debug.Fail(ex.ToString()); // TODO: Log
+                if (scheduler._entries.TryRemove(pair))
+                {
+                    entry.Dispose();
+                }
+                return;
             }
         }
     }

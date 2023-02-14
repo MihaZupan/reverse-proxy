@@ -1,7 +1,5 @@
 # HTTP Client Configuration
 
-Introduced: preview5
-
 ## Introduction
 
 Each [Cluster](xref:Yarp.ReverseProxy.Configuration.ClusterConfig) has a dedicated [HttpMessageInvoker](https://docs.microsoft.com/dotnet/api/system.net.http.httpmessageinvoker) instance used to forward requests to its [Destination](xref:Yarp.ReverseProxy.Configuration.DestinationConfig)s. The configuration is defined per cluster. On YARP startup, all clusters get new `HttpMessageInvoker` instances, however if later the cluster configuration gets changed the [IForwarderHttpClientFactory](xref:Yarp.ReverseProxy.Forwarder.IForwarderHttpClientFactory) will re-run and decide if it should create a new `HttpMessageInvoker` or keep using the existing one. The default `IForwarderHttpClientFactory` implementation creates a new `HttpMessageInvoker` when there are changes to the [HttpClientConfig](xref:Yarp.ReverseProxy.Configuration.HttpClientConfig).
@@ -22,6 +20,11 @@ HTTP client configuration is based on [HttpClientConfig](xref:Yarp.ReverseProxy.
     "DangerousAcceptAnyServerCertificate": "<bool>",
     "RequestHeaderEncoding": "<encoding-name>",
     "EnableMultipleHttp2Connections": "<bool>"
+    "WebProxy": {
+        "Address": "<url>",
+        "BypassOnLocal": "<bool>",
+        "UseDefaultCredentials": "<bool>"
+    }
 }
 ```
 
@@ -41,7 +44,7 @@ Configuration settings:
 ```JSON
 "DangerousAcceptAnyServerCertificate": "true"
 ```
-- RequestHeaderEncoding - enables other than ASCII encoding for outgoing request headers. Setting this value will leverage [`SocketsHttpHandler.RequestHeaderEncodingSelector`](https://docs.microsoft.com/dotnet/api/system.net.http.socketshttphandler.requestheaderencodingselector) and use the selected encoding for all headers. If you need more granular approach, please use custom `IProxyHttpClientFactory`. The value is then parsed by [`Encoding.GetEncoding`](https://docs.microsoft.com/dotnet/api/system.text.encoding.getencoding#System_Text_Encoding_GetEncoding_System_String_), use values like: "utf-8", "iso-8859-1", etc. **This setting is only available for .NET 5.0.**
+- RequestHeaderEncoding - enables other than ASCII encoding for outgoing request headers. Setting this value will leverage [`SocketsHttpHandler.RequestHeaderEncodingSelector`](https://docs.microsoft.com/dotnet/api/system.net.http.socketshttphandler.requestheaderencodingselector) and use the selected encoding for all headers. If you need more granular approach, please use custom `IProxyHttpClientFactory`. The value is then parsed by [`Encoding.GetEncoding`](https://docs.microsoft.com/dotnet/api/system.text.encoding.getencoding#System_Text_Encoding_GetEncoding_System_String_), use values like: "utf-8", "iso-8859-1", etc.
 ```JSON
 "RequestHeaderEncoding": "utf-8"
 ```
@@ -58,23 +61,20 @@ private static IHostBuilder CreateHostBuilder(string[] args) =>
                       });
         );
 ```
-- EnableMultipleHttp2Connections - enables opening additional HTTP/2 connections to the same server when the maximum number of concurrent streams is reached on all existing connections. The default is `true`. **This feature is available from .NET 5.0**, see [SocketsHttpHandler.EnableMultipleHttp2Connections](https://docs.microsoft.com/en-us/dotnet/api/system.net.http.socketshttphandler.enablemultiplehttp2connections)
+- EnableMultipleHttp2Connections - enables opening additional HTTP/2 connections to the same server when the maximum number of concurrent streams is reached on all existing connections. The default is `true`. See [SocketsHttpHandler.EnableMultipleHttp2Connections](https://docs.microsoft.com/dotnet/api/system.net.http.socketshttphandler.enablemultiplehttp2connections)
 ```JSON
 "EnableMultipleHttp2Connections": false
 ```
-
-For .NET Core 3.1, Latin1 ("iso-8859-1") is the only non-ASCII header encoding that can be accepted and only via `appsettings.json`:
+- WebProxy - Enables sending requests through an outbound HTTP proxy to reach the destinations. See [`SocketsHttpHandler.Proxy`](https://docs.microsoft.com/dotnet/api/system.net.http.socketshttphandler.proxy) for details.
+  - Address - The url address of the outbound proxy.
+  - BypassOnLocal - A bool indicating if requests to local addresses should bypass the outbound proxy.
+  - UseDefaultCredentials - A bool indicating if the current application credentials should be use to authenticate to the outbound proxy. ASP.NET Core does not impersonate authenticated users for outbound requests.
 ```JSON
-{
-    "Kestrel":
-    {
-        "Latin1RequestHeaders": true
-    }
+"WebProxy": {
+    "Address": "http://myproxy:8080",
+    "BypassOnLocal": "true",
+    "UseDefaultCredentials": "false"
 }
-```
-together with an application wide switch:
-```C#
-AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.AllowLatin1Headers", true);
 ```
 
 At the moment, there is no solution for changing encoding for response headers in Kestrel (see [aspnetcore#26334](https://github.com/dotnet/aspnetcore/issues/26334)), only ASCII is accepted.
@@ -84,7 +84,7 @@ At the moment, there is no solution for changing encoding for response headers i
 HTTP request configuration is based on [ForwarderRequestConfig](xref:Yarp.ReverseProxy.Forwarder.ForwarderRequestConfig) and represented by the following configuration schema.
 ```JSON
 "HttpRequest": {
-    "Timeout": "<timespan>",
+    "ActivityTimeout": "<timespan>",
     "Version": "<string>",
     "VersionPolicy": ["RequestVersionOrLower", "RequestVersionOrHigher", "RequestVersionExact"],
     "AllowResponseBuffering": "<bool>"
@@ -92,9 +92,9 @@ HTTP request configuration is based on [ForwarderRequestConfig](xref:Yarp.Revers
 ```
 
 Configuration settings:
-- Timeout - the timeout for the outgoing request sent by [HttpMessageInvoker.SendAsync](https://docs.microsoft.com/dotnet/api/system.net.http.httpmessageinvoker.sendasync). If not specified, 100 seconds is used.
-- Version - outgoing request [version](https://docs.microsoft.com/dotnet/api/system.net.http.httprequestmessage.version). The supported values at the moment are `1.0`, `1.1` and `2`. Default value is 2.
-- VersionPolicy - defines how the final version is selected for the outgoing requests. **This feature is available from .NET 5.0**, see [HttpRequestMessage.VersionPolicy](https://docs.microsoft.com/dotnet/api/system.net.http.httprequestmessage.versionpolicy). The default value is `RequestVersionOrLower`.
+- ActivityTimeout - how long a request is allowed to remain idle between any operation completing, after which it will be canceled. The default is 100 seconds. The timeout will reset when response headers are received or after successfully reading or writing any request, response, or streaming data like gRPC or WebSockets. TCP keep-alives and HTTP/2 protocol pings will not reset the timeout, but WebSocket pings will.
+- Version - outgoing request [version](https://docs.microsoft.com/dotnet/api/system.net.http.httprequestmessage.version). The supported values at the moment are `1.0`, `1.1`, `2` and `3`. Default value is 2.
+- VersionPolicy - defines how the final version is selected for the outgoing requests. See [HttpRequestMessage.VersionPolicy](https://docs.microsoft.com/dotnet/api/system.net.http.httprequestmessage.versionpolicy). The default value is `RequestVersionOrLower`.
 - AllowResponseBuffering - allows to use write buffering when sending a response back to the client, if the server hosting YARP (e.g. IIS) supports it. **NOTE**: enabling it can break SSE (server side event) scenarios.
 
 
@@ -115,7 +115,7 @@ The below example shows 2 samples of HTTP client and request configurations for 
                 "DangerousAcceptAnyServerCertificate": "true"
             },
             "HttpRequest": {
-                "Timeout": "00:00:30"
+                "ActivityTimeout": "00:00:30"
             },
             "Destinations": {
                 "cluster1/destination1": {
@@ -154,7 +154,6 @@ The following is an example of `HttpClientConfig` using [code based](config-prov
 ```C#
 public void ConfigureServices(IServiceCollection services)
 {
-    services.AddControllers();
     var routes = new[]
     {
         new RouteConfig()
@@ -181,8 +180,7 @@ public void ConfigureServices(IServiceCollection services)
     };
 
     services.AddReverseProxy()
-        .LoadFromMemory(routes, clusters)
-        .AddProxyConfigFilter<CustomConfigFilter>();
+        .LoadFromMemory(routes, clusters);
 }
 ```
 
@@ -200,7 +198,7 @@ public void ConfigureServices(IServiceCollection services)
 ```
 
 ## Custom IForwarderHttpClientFactory
-If direct control of HTTP client construction is necessary, the default [IForwarderHttpClientFactory](xref:Yarp.ReverseProxy.Forwarder.IForwarderHttpClientFactory) can be replaced with a custom one. For some customizations you can derive from the default [ProxyHttpClientFactory](xref:Yarp.ReverseProxy.Service.Proxy.Infrastructure.ProxyHttpClientFactory) and override the methods that configure the client.
+If direct control of HTTP client construction is necessary, the default [IForwarderHttpClientFactory](xref:Yarp.ReverseProxy.Forwarder.IForwarderHttpClientFactory) can be replaced with a custom one. For some customizations you can derive from the default [ForwarderHttpClientFactory](xref:Yarp.ReverseProxy.Forwarder.ForwarderHttpClientFactory) and override the methods that configure the client.
 
 It's recommended that any custom factory set the following `SocketsHttpHandler` properties to the same values as the default factory does in order to preserve a correct reverse proxy behavior and avoid unnecessary overhead.
 
@@ -210,7 +208,9 @@ new SocketsHttpHandler
     UseProxy = false,
     AllowAutoRedirect = false,
     AutomaticDecompression = DecompressionMethods.None,
-    UseCookies = false
+    UseCookies = false,
+    ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
+    ConnectTimeout = TimeSpan.FromSeconds(15),
 };
 ```
 
@@ -230,7 +230,8 @@ public class CustomForwarderHttpClientFactory : IForwarderHttpClientFactory
             UseProxy = false,
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.None,
-            UseCookies = false
+            UseCookies = false,
+            ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current)
         };
 
         return new HttpMessageInvoker(handler, disposeHandler: true);

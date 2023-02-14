@@ -1,7 +1,5 @@
 # Load Balancing
 
-Introduced: preview8
-
 ## Introduction
 
 Whenever there are multiple healthy destinations available, YARP has to decide which one to use for a given request.
@@ -62,7 +60,7 @@ var clusters = new[]
 ## Built-in policies
 
 YARP ships with the following built-in policies:
-- `First`
+- `FirstAlphabetical`
 
     Select the alphabetically first available destination without considering load. This is useful for dual destination fail-over systems.
 - `Random`
@@ -91,26 +89,15 @@ public sealed class LastLoadBalancingPolicy : ILoadBalancingPolicy
 {
     public string Name => "Last";
 
-    public DestinationState PickDestination(HttpContext context, IReadOnlyList<DestinationState> availableDestinations)
+    public DestinationState? PickDestination(HttpContext context, ClusterState cluster, IReadOnlyList<DestinationState> availableDestinations)
     {
         return availableDestinations[^1];
     }
 }
 
-// Register it in DI
+// Register it in DI in ConfigureServices method
 services.AddSingleton<ILoadBalancingPolicy, LastLoadBalancingPolicy>();
 
 // Set the LoadBalancingPolicy on the cluster
 cluster.LoadBalancingPolicy = "Last";
-```
-
-Other information that may be necessary to decide on a destination, such as cluster configuration, can be accessed from the `HttpContext`:
-
-```c#
-public DestinationState PickDestination(HttpContext context, IReadOnlyList<DestinationState> availableDestinations)
-{
-    var proxyFeature = context.GetReverseProxyFeature();
-    var cluster = proxyFeature.Cluster;
-    // ...
-}
 ```
