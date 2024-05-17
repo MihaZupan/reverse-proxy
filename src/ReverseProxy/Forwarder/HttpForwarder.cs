@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -15,7 +14,6 @@ using Microsoft.AspNetCore.Http.Features;
 #if NET8_0_OR_GREATER
 using Microsoft.AspNetCore.Http.Timeouts;
 #endif
-using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Net.Http.Headers;
@@ -643,7 +641,16 @@ internal sealed class HttpForwarder : IHttpForwarder
             {
                 var error = HandleRequestBodyFailure(context, requestBodyCopyResult, requestBodyException!, requestException,
                     timedOut: requestCancellationSource.IsCancellationRequested);
-                await transformer.TransformResponseAsync(context, proxyResponse: null, requestCancellationSource.Token);
+
+                try
+                {
+                    await transformer.TransformResponseAsync(context, proxyResponse: null, requestCancellationSource.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    // We're about to report a more specific error, so ignore OCEs that occur here.
+                }
+
                 return error;
             }
         }
@@ -669,7 +676,16 @@ internal sealed class HttpForwarder : IHttpForwarder
                 await requestContent.ConsumptionTask;
             }
 
-            await transformer.TransformResponseAsync(context, null, requestCancellationSource.Token);
+            try
+            {
+                await transformer.TransformResponseAsync(context, proxyResponse: null, requestCancellationSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // We may have manually cancelled the request CTS as part of error handling.
+                // We're about to report a more specific error, so ignore OCEs that occur here.
+            }
+
             return error;
         }
     }
@@ -966,6 +982,11 @@ internal sealed class HttpForwarder : IHttpForwarder
             EventIds.ForwardingError,
             "{error}: {message}");
 
+        private static readonly Action<ILogger, ForwarderError, string, Exception> _proxyRequestCancelled = LoggerMessage.Define<ForwarderError, string>(
+            LogLevel.Debug,
+            EventIds.ForwardingRequestCancelled,
+            "{error}: {message}");
+
         private static readonly Action<ILogger, int, Exception?> _notProxying = LoggerMessage.Define<int>(
             LogLevel.Information,
             EventIds.NotForwarding,
@@ -1015,7 +1036,21 @@ internal sealed class HttpForwarder : IHttpForwarder
 
         public static void ErrorProxying(ILogger logger, ForwarderError error, Exception ex)
         {
-            _proxyError(logger, error, GetMessage(error), ex);
+            var message = GetMessage(error);
+
+            if (error is
+                ForwarderError.RequestCanceled or
+                ForwarderError.RequestBodyCanceled or
+                ForwarderError.UpgradeRequestCanceled)
+            {
+                // These error conditions are triggered by the client and are not generally indicative of a problem with the proxy.
+                // It's unlikely that they will be useful in most cases, so we log them at Debug level to reduce noise.
+                _proxyRequestCancelled(logger, error, message, ex);
+            }
+            else
+            {
+                _proxyError(logger, error, message, ex);
+            }
         }
 
         public static void RetryingWebSocketDowngradeNoConnect(ILogger logger)

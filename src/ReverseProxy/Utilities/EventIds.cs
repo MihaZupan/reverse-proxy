@@ -68,4 +68,6 @@ internal static class EventIds
     public static readonly EventId RetryingWebSocketDowngradeNoHttp2 = new EventId(62, "RetryingWebSocketDowngradeNoHttp2");
     public static readonly EventId InvalidSecWebSocketKeyHeader = new EventId(63, "InvalidSecWebSocketKeyHeader");
     public static readonly EventId TimeoutNotApplied = new(64, nameof(TimeoutNotApplied));
+    public static readonly EventId DelegationQueueNoLongerExists = new(65, nameof(DelegationQueueNoLongerExists));
+    public static readonly EventId ForwardingRequestCancelled = new(66, nameof(ForwardingRequestCancelled));
 }

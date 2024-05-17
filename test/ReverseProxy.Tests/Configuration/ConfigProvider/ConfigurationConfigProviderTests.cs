@@ -69,7 +69,8 @@ public class ConfigurationConfigProviderTests
                             Interval = TimeSpan.FromSeconds(4),
                             Timeout = TimeSpan.FromSeconds(6),
                             Policy = "Any5xxResponse",
-                            Path = "healthCheckPath"
+                            Path = "healthCheckPath",
+                            Query = "?key=value"
                         },
                         AvailableDestinationsPolicy = "HealthyOrPanic"
                     },
@@ -239,7 +240,8 @@ public class ConfigurationConfigProviderTests
                     ""Interval"": ""00:00:04"",
                     ""Timeout"": ""00:00:06"",
                     ""Policy"": ""Any5xxResponse"",
-                    ""Path"": ""healthCheckPath""
+                    ""Path"": ""healthCheckPath"",
+                    ""Query"": ""?key=value""
                 },
                 ""AvailableDestinationsPolicy"": ""HealthyOrPanic""
             },
@@ -347,6 +349,7 @@ public class ConfigurationConfigProviderTests
             ""ClusterId"": ""cluster1"",
             ""AuthorizationPolicy"": ""Default"",
             ""RateLimiterPolicy"": ""Default"",
+            ""OutputCachePolicy"": ""Default"",
             ""CorsPolicy"": ""Default"",
             ""TimeoutPolicy"": ""Default"",
             ""Timeout"": ""00:00:01"",
@@ -393,6 +396,7 @@ public class ConfigurationConfigProviderTests
             ""ClusterId"": ""cluster2"",
             ""AuthorizationPolicy"": null,
             ""RateLimiterPolicy"": null,
+            ""OutputCachePolicy"": null,
             ""CorsPolicy"": null,
             ""Metadata"": null,
             ""Transforms"": null
@@ -538,6 +542,7 @@ public class ConfigurationConfigProviderTests
         Assert.Equal(cluster1.HealthCheck.Active.Timeout, abstractCluster1.HealthCheck.Active.Timeout);
         Assert.Equal(cluster1.HealthCheck.Active.Policy, abstractCluster1.HealthCheck.Active.Policy);
         Assert.Equal(cluster1.HealthCheck.Active.Path, abstractCluster1.HealthCheck.Active.Path);
+        Assert.Equal(cluster1.HealthCheck.Active.Query, abstractCluster1.HealthCheck.Active.Query);
         Assert.Equal(LoadBalancingPolicies.Random, abstractCluster1.LoadBalancingPolicy);
         Assert.Equal(cluster1.SessionAffinity.Enabled, abstractCluster1.SessionAffinity.Enabled);
         Assert.Equal(cluster1.SessionAffinity.FailurePolicy, abstractCluster1.SessionAffinity.FailurePolicy);

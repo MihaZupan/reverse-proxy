@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Configuration.ClusterValidators;
+using Yarp.ReverseProxy.Configuration.RouteValidators;
 using Yarp.ReverseProxy.Delegation;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Health;
@@ -24,7 +26,24 @@ internal static class IReverseProxyBuilderExtensions
     public static IReverseProxyBuilder AddConfigBuilder(this IReverseProxyBuilder builder)
     {
         builder.Services.TryAddSingleton<IYarpRateLimiterPolicyProvider, YarpRateLimiterPolicyProvider>();
+        builder.Services.TryAddSingleton<IYarpOutputCachePolicyProvider, YarpOutputCachePolicyProvider>();
         builder.Services.TryAddSingleton<IConfigValidator, ConfigValidator>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, AuthorizationPolicyValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, RateLimitPolicyValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, OutputCachePolicyValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, TimeoutPolicyValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, CorsPolicyValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, HeadersValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, HostValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, MethodsValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, PathValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IRouteValidator, QueryParametersValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, DestinationValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, LoadBalancingValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, HealthCheckValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, SessionAffinityValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, ProxyHttpClientValidator>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IClusterValidator, ProxyHttpRequestValidator>());
         builder.Services.TryAddSingleton<IRandomFactory, RandomFactory>();
         builder.AddTransformFactory<ForwardedTransformFactory>();
         builder.AddTransformFactory<HttpMethodTransformFactory>();
@@ -104,8 +123,10 @@ internal static class IReverseProxyBuilderExtensions
         if (!builder.Services.Any(d => d.ServiceType == typeof(IActiveHealthCheckMonitor)))
         {
             builder.Services.AddSingleton<ActiveHealthCheckMonitor>();
-            builder.Services.AddSingleton<IActiveHealthCheckMonitor>(p => p.GetRequiredService<ActiveHealthCheckMonitor>());
-            builder.Services.AddSingleton<IClusterChangeListener>(p => p.GetRequiredService<ActiveHealthCheckMonitor>());
+            builder.Services.AddSingleton<IActiveHealthCheckMonitor>(p =>
+                p.GetRequiredService<ActiveHealthCheckMonitor>());
+            builder.Services.AddSingleton<IClusterChangeListener>(p =>
+                p.GetRequiredService<ActiveHealthCheckMonitor>());
         }
 
         builder.Services.AddSingleton<IActiveHealthCheckPolicy, ConsecutiveFailuresHealthPolicy>();

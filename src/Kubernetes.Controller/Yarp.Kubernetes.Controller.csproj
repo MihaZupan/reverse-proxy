@@ -2,11 +2,12 @@
 
   <PropertyGroup>
     <Description>Toolkit for building a Kubernetes Ingress Controller in .NET using the infrastructure from ASP.NET and .NET</Description>
-    <TargetFrameworks>net6.0;net7.0;net8.0</TargetFrameworks>
+    <TargetFrameworks>$(ReleaseTFMs)</TargetFrameworks>
     <OutputType>Library</OutputType>
     <NoWarn>$(NoWarn);CS8002</NoWarn>
     <IsPackable>true</IsPackable>
     <IsShipping>false</IsShipping>
+    <PackageTags>yarp;dotnet;reverse-proxy;aspnetcore;kubernetes</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="KubernetesClient" Version="9.0.28" />
-    <PackageReference Include="YamlDotNet" Version="12.0.1" />
+    <PackageReference Include="KubernetesClient" Version="10.1.19" />
+    <PackageReference Include="YamlDotNet" Version="13.7.1" />
   </ItemGroup>
 
 </Project>
