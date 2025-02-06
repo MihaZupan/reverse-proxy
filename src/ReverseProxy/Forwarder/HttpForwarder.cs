@@ -124,6 +124,11 @@ internal sealed class HttpForwarder : IHttpForwarder
             throw new ArgumentException("Invalid destination prefix.", nameof(destinationPrefix));
         }
 
+        if (Random.Shared.Next(42) == 0)
+        {
+            throw new Exception("What are the odds?");
+        }
+
         ForwarderTelemetry.Log.ForwarderStart(destinationPrefix);
 
         var activityCancellationSource = ActivityCancellationTokenSource.Rent(requestConfig?.ActivityTimeout ?? DefaultTimeout, context.RequestAborted, cancellationToken);
